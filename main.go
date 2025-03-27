@@ -58,15 +58,21 @@ var (
 	qqManager     *ConnectionManager
 	appConfig     *Config
 
-	rollRegex = regexp.MustCompile(`^r\s*(\d+)d(\d+)([\+\-]\d+)?$`)
-	scRegex   = regexp.MustCompile(`sc\s+(\d+)/(\d+)`)
-	raRegex   = regexp.MustCompile(`^ra\s+(\d+)$`)
-	rcRegex   = regexp.MustCompile(`^rc\s+(\d+)$`)
+	rollRegex      = regexp.MustCompile(`^r\s*((?:\d*d?\d+[\+\-\*]\d+)+|(?:\d*d\d+(?:[\+\-\*]\d+)*)+|(?:\d+[\+\-\*]\d+)+)$`)
+	scRegex        = regexp.MustCompile(`sc\s+(\d+)/(\d+)`)
+	raRegex        = regexp.MustCompile(`^ra\s+(\d+)$`)
+	rcRegex        = regexp.MustCompile(`^rc\s+(\d+)$`)
+	reasonRollRegex = regexp.MustCompile(`^r(d?)\s*(.*)$`)
+	setDiceRegex   = regexp.MustCompile(`^set(\d+)$`)
+
+	defaultDiceSides = 100
+	diceMutex        sync.RWMutex
 
 	ErrMaxRetries  = errors.New("maximum retry attempts reached")
 	ErrInvalidMsg  = errors.New("invalid message format")
 	ErrConnClosed  = errors.New("connection closed")
 	ErrConfigLoad  = errors.New("configuration load failed")
+	ErrInvalidDice = errors.New("invalid dice sides")
 )
 
 func NewConnectionManager(url string, maxRetry int) *ConnectionManager {
@@ -150,7 +156,7 @@ func main() {
 		appConfig = &Config{
 			HTTPPort:  "8088",
 			QQWSURL:   "ws://127.0.0.1:3009",
-			QQGroupID: 0, // 需要后续处理
+			QQGroupID: 0,
 		}
 	}
 
@@ -328,11 +334,52 @@ func processCommand(cmd string) string {
 		return processRACheck(cmd)
 	case rcRegex.MatchString(cmd):
 		return processRCCheck(cmd)
+	case reasonRollRegex.MatchString(cmd):
+		return processReasonRoll(cmd)
+	case setDiceRegex.MatchString(cmd):
+		return processSetDice(cmd)
 	case cmd == "help":
-		return "COC指令帮助:\n.r[骰子指令] 掷骰\n.coc 生成调查员\n.sc [成功损失]/[失败损失] 理智检定\n.ra [技能值] COCTRPG检定\n.rc [技能值] COC7th核心规则检定"
+		return "COC指令帮助:\n.r[骰子指令] 掷骰\n.coc 生成调查员\n.sc [成功损失]/[失败损失] 理智检定\n.ra [技能值] COCTRPG检定\n.rc [技能值] COC7th核心规则检定\n.r[理由] 带理由的投掷\n.set[数字] 设置默认骰子面数(如.set6)"
 	default:
 		return "未知指令，请输入.help查看帮助"
 	}
+}
+
+func processSetDice(cmd string) string {
+	matches := setDiceRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的设置指令格式，正确格式：.set[数字]，例如.set6"
+	}
+
+	sides, err := strconv.Atoi(matches[1])
+	if err != nil || sides <= 0 {
+		return "骰子面数必须是正整数"
+	}
+
+	diceMutex.Lock()
+	defaultDiceSides = sides
+	diceMutex.Unlock()
+
+	return fmt.Sprintf("已设置默认骰子面数为D%d", sides)
+}
+
+func processReasonRoll(cmd string) string {
+	matches := reasonRollRegex.FindStringSubmatch(cmd)
+	if len(matches) < 3 {
+		return "无效的投掷指令格式"
+	}
+
+	reason := strings.TrimSpace(matches[2])
+	if reason == "" {
+		return "请输入投掷理由，例如：.r 测试"
+	}
+
+	diceMutex.RLock()
+	sides := defaultDiceSides
+	diceMutex.RUnlock()
+
+	roll := rand.Intn(sides) + 1
+	return fmt.Sprintf("因为 %s 1D%d=%d", reason, sides, roll)
 }
 
 func processRACheck(cmd string) string {
@@ -409,32 +456,122 @@ func processRCCheck(cmd string) string {
 }
 
 func processRoll(cmd string) string {
-	matches := rollRegex.FindStringSubmatch(cmd)
-	if len(matches) < 3 {
+	// 移除命令前缀和空白
+	cmd = strings.TrimPrefix(cmd, "r")
+	cmd = strings.TrimSpace(cmd)
+
+	// 处理简单骰子表达式
+	if strings.Contains(cmd, "d") {
+		parts := strings.FieldsFunc(cmd, func(r rune) bool {
+			return r == '+' || r == '-' || r == '*'
+		})
+		ops := make([]string, 0)
+		for _, r := range cmd {
+			if r == '+' || r == '-' || r == '*' {
+				ops = append(ops, string(r))
+			}
+		}
+
+		var results []string
+		total := 0
+		lastOp := "+"
+
+		for i, part := range parts {
+			if i > 0 && i-1 < len(ops) {
+				lastOp = ops[i-1]
+			}
+
+			// 处理单个骰子表达式
+			if strings.Contains(part, "d") {
+				diceParts := strings.Split(part, "d")
+				diceNum := 1
+				diceSides := 0
+				var err error
+
+				if diceParts[0] != "" {
+					diceNum, err = strconv.Atoi(diceParts[0])
+					if err != nil {
+						return "无效的骰子数量"
+					}
+				}
+
+				if len(diceParts) < 2 {
+					return "无效的骰子表达式"
+				}
+
+				diceSides, err = strconv.Atoi(diceParts[1])
+				if err != nil {
+					return "无效的骰子面数"
+				}
+
+				if diceNum <= 0 || diceSides <= 0 {
+					return "骰子数量和面数必须为正整数"
+				}
+
+				var rolls []int
+				sum := 0
+				for j := 0; j < diceNum; j++ {
+					roll := rand.Intn(diceSides) + 1
+					rolls = append(rolls, roll)
+					sum += roll
+				}
+
+				// 应用操作符
+				switch lastOp {
+				case "+":
+					total += sum
+				case "-":
+					total -= sum
+				case "*":
+					total *= sum
+				}
+
+				results = append(results, fmt.Sprintf("%dd%d: %v = %d", diceNum, diceSides, rolls, sum))
+			} else {
+				// 处理纯数字
+				num, err := strconv.Atoi(part)
+				if err != nil {
+					return "无效的数字"
+				}
+
+				switch lastOp {
+				case "+":
+					total += num
+				case "-":
+					total -= num
+				case "*":
+					total *= num
+				}
+
+				results = append(results, fmt.Sprintf("%d", num))
+			}
+		}
+
+		// 构建结果字符串
+		var builder strings.Builder
+		builder.WriteString("掷骰: ")
+		for i, res := range results {
+			if i > 0 {
+				builder.WriteString(fmt.Sprintf(" %s ", ops[i-1]))
+			}
+			builder.WriteString(res)
+		}
+		builder.WriteString(fmt.Sprintf(" = %d", total))
+		return builder.String()
+	}
+
+	// 处理简单数字情况
+	diceMutex.RLock()
+	sides := defaultDiceSides
+	diceMutex.RUnlock()
+
+	num, err := strconv.Atoi(cmd)
+	if err != nil {
 		return "无效的骰子指令格式"
 	}
 
-	diceNum, _ := strconv.Atoi(matches[1])
-	diceSides, _ := strconv.Atoi(matches[2])
-	modifier := 0
-	if len(matches) > 3 && matches[3] != "" {
-		modifier, _ = strconv.Atoi(matches[3])
-	}
-
-	var rolls []int
-	total := 0
-	for i := 0; i < diceNum; i++ {
-		roll := rand.Intn(diceSides) + 1
-		rolls = append(rolls, roll)
-		total += roll
-	}
-	total += modifier
-
-	result := fmt.Sprintf("掷骰 %dd%d: %v", diceNum, diceSides, rolls)
-	if modifier != 0 {
-		result += fmt.Sprintf(" %+d = %d", modifier, total)
-	}
-	return result
+	roll := rand.Intn(sides) + 1
+	return fmt.Sprintf("掷骰 1D%d: %d", sides, roll)
 }
 
 func processCoC() string {
