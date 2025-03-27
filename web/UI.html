@@ -1,55 +1,250 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>COC Dice WebUI</title>
+    <title>COC骰子助手</title>
     <style>
-        body { font-family: Arial, sans-serif; max-width: 800px; margin: 0 auto; padding: 20px; }
-        #output { height: 400px; border: 1px solid #ccc; padding: 10px; overflow-y: auto; margin-bottom: 10px; }
-        .message { margin: 5px 0; padding: 5px; border-radius: 4px; }
-        .command { background: #e3f2fd; }
-        .result { background: #f0f4c3; }
-        .system { color: #666; }
-        input { width: 75%; padding: 8px; }
-        button { width: 20%; padding: 8px; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            max-width: 800px;
+            margin: 2rem auto;
+            padding: 0 20px;
+            background: #f8f9fa;
+        }
+        #output {
+            height: 50vh;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 1rem;
+            background: white;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            overflow-y: auto;
+            margin-bottom: 1.5rem;
+        }
+        .message {
+            margin: 0.8rem 0;
+            padding: 0.8rem;
+            border-radius: 8px;
+            font-size: 0.95rem;
+            line-height: 1.4;
+            animation: fadeIn 0.3s ease;
+        }
+        @keyframes fadeIn {
+            from { opacity: 0; transform: translateY(10px); }
+            to { opacity: 1; transform: translateY(0); }
+        }
+        .command {
+            background: #e7f5ff;
+            border-left: 4px solid #228be6;
+            color: #1864ab;
+        }
+        .result {
+            background: #fff3bf;
+            border-left: 4px solid #fcc419;
+            color: #5f3f00;
+        }
+        .system {
+            background: #f8f9fa;
+            border-left: 4px solid #adb5bd;
+            color: #495057;
+        }
+        .input-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 1rem;
+        }
+        input {
+            flex: 1;
+            padding: 12px 16px;
+            border: 2px solid #dee2e6;
+            border-radius: 8px;
+            font-size: 1rem;
+            transition: all 0.2s;
+        }
+        input:focus {
+            border-color: #4dabf7;
+            box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.2);
+            outline: none;
+        }
+        button {
+            padding: 12px 24px;
+            background: #228be6;
+            color: white;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: 600;
+            transition: all 0.2s;
+        }
+        button:hover {
+            background: #1971c2;
+            transform: translateY(-1px);
+        }
+        button:active {
+            transform: translateY(0);
+        }
+        .timestamp {
+            font-size: 0.8em;
+            color: #868e96;
+            margin-right: 8px;
+        }
+        .settings {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .settings-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #495057;
+        }
+        .settings-group {
+            display: flex;
+            gap: 12px;
+            margin-bottom: 0.5rem;
+        }
+        .settings-label {
+            min-width: 100px;
+            padding: 12px 0;
+            font-weight: 500;
+        }
+        .status {
+            padding: 0.5rem;
+            border-radius: 8px;
+            margin-top: 0.5rem;
+            font-weight: 500;
+        }
+        .status-connected {
+            background: #ebfbee;
+            color: #2b8a3e;
+        }
+        .status-disconnected {
+            background: #fff3bf;
+            color: #e67700;
+        }
     </style>
 </head>
 <body>
+    <div class="settings">
+        <div class="settings-title">连接设置</div>
+        <div class="settings-group">
+            <div class="settings-label">WebSocket地址:</div>
+            <input type="text" id="wsUrl" placeholder="ws://127.0.0.1:3009">
+            <button onclick="connectWS()">连接</button>
+        </div>
+        <div id="connectionStatus" class="status status-disconnected">未连接</div>
+    </div>
+
     <div id="output"></div>
-    <div>
-        <input type="text" id="input" placeholder="输入指令，例如 .coc 或 .r 3d6">
-        <button onclick="sendCommand()">发送</button>
+    <div class="input-group">
+        <input type="text" id="input" placeholder="输入指令（例：.coc7/.ra 70）" autocomplete="off">
+        <button onclick="sendCommand()">投掷 🎲</button>
     </div>
 
     <script>
-        const ws = new WebSocket('ws://' + window.location.host + '/ws');
+        let ws = null;
         const output = document.getElementById('output');
         const input = document.getElementById('input');
+        const wsUrlInput = document.getElementById('wsUrl');
+        const connectionStatus = document.getElementById('connectionStatus');
 
-        ws.onmessage = function(event) {
-            const data = JSON.parse(event.data);
-            appendMessage(data.message, data.type);
-        };
+        // 从本地存储加载保存的WebSocket地址
+        if (localStorage.getItem('wsUrl')) {
+            wsUrlInput.value = localStorage.getItem('wsUrl');
+        }
+
+        function connectWS() {
+            const url = wsUrlInput.value.trim();
+            if (!url) {
+                addMessage('请输入有效的WebSocket地址', 'system');
+                return;
+            }
+
+            // 保存到本地存储
+            localStorage.setItem('wsUrl', url);
+
+            if (ws) {
+                ws.close();
+            }
+
+            ws = new WebSocket(url);
+            
+            ws.onopen = function() {
+                connectionStatus.textContent = '已连接';
+                connectionStatus.className = 'status status-connected';
+                addMessage('已连接到WebSocket服务器', 'system');
+            };
+            
+            ws.onclose = function() {
+                connectionStatus.textContent = '未连接';
+                connectionStatus.className = 'status status-disconnected';
+                addMessage('WebSocket连接已关闭', 'system');
+            };
+            
+            ws.onerror = function(error) {
+                connectionStatus.textContent = '连接错误';
+                connectionStatus.className = 'status status-disconnected';
+                addMessage('WebSocket连接错误: ' + error, 'system');
+            };
+            
+            ws.onmessage = function(event) {
+                addMessage(event.data, 'result');
+            };
+        }
 
         function sendCommand() {
             const command = input.value.trim();
-            if (command) {
+            if (!command) return;
+
+            addMessage(command, 'command');
+            input.value = '';
+
+            if (ws && ws.readyState === WebSocket.OPEN) {
                 ws.send(command);
-                appendMessage(command, 'command');
-                input.value = '';
+            } else {
+                // 本地回退功能
+                fetch('/command', {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                    },
+                    body: JSON.stringify({ command: command })
+                })
+                .then(response => response.json())
+                .then(data => {
+                    if (data.response) {
+                        addMessage(data.response, 'result');
+                    }
+                })
+                .catch(error => {
+                    addMessage('本地处理失败: ' + error, 'system');
+                });
             }
         }
 
-        function appendMessage(text, type) {
-            const div = document.createElement('div');
-            div.className = `message ${type}`;
-            div.textContent = `[${new Date().toLocaleTimeString()}] ${text}`;
-            output.appendChild(div);
+        function addMessage(text, type) {
+            const messageDiv = document.createElement('div');
+            messageDiv.className = `message ${type}`;
+            
+            const timestamp = new Date().toLocaleTimeString();
+            messageDiv.innerHTML = `<span class="timestamp">${timestamp}</span> ${text}`;
+            
+            output.appendChild(messageDiv);
             output.scrollTop = output.scrollHeight;
         }
 
-        // 回车发送
-        input.addEventListener('keypress', (e) => {
-            if (e.key === 'Enter') sendCommand();
+        // 尝试自动连接
+        if (wsUrlInput.value) {
+            connectWS();
+        }
+
+        // 允许按Enter键发送消息
+        input.addEventListener('keypress', function(e) {
+            if (e.key === 'Enter') {
+                sendCommand();
+            }
         });
     </script>
 </body>
