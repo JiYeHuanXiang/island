@@ -58,12 +58,18 @@ var (
 	qqManager     *ConnectionManager
 	appConfig     *Config
 
-	rollRegex      = regexp.MustCompile(`^r\s*((?:\d*d?\d+[\+\-\*]\d+)+|(?:\d*d\d+(?:[\+\-\*]\d+)*)+|(?:\d+[\+\-\*]\d+)+)$`)
-	scRegex        = regexp.MustCompile(`sc\s+(\d+)/(\d+)`)
-	raRegex        = regexp.MustCompile(`^ra\s+(\d+)$`)
-	rcRegex        = regexp.MustCompile(`^rc\s+(\d+)$`)
+	rollRegex       = regexp.MustCompile(`^r\s*((?:\d*d?\d+[\+\-\*]\d+)+|(?:\d*d\d+(?:[\+\-\*]\d+)*)+|(?:\d+[\+\-\*]\d+)+)$`)
+	scRegex         = regexp.MustCompile(`sc\s+(\d+)/(\d+)`)
+	raRegex         = regexp.MustCompile(`^ra\s+(\d+)$`)
+	rcRegex         = regexp.MustCompile(`^rc\s+(\d+)$`)
+	rbRegex         = regexp.MustCompile(`^rb\s+(\d+)$`)
 	reasonRollRegex = regexp.MustCompile(`^r(d?)\s*(.*)$`)
-	setDiceRegex   = regexp.MustCompile(`^set(\d+)$`)
+	setDiceRegex    = regexp.MustCompile(`^set(\d+)$`)
+	enRegex         = regexp.MustCompile(`^en\s+(\d+)$`)
+	tiRegex         = regexp.MustCompile(`^ti$`)
+	liRegex         = regexp.MustCompile(`^li$`)
+	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
+	coc7Regex       = regexp.MustCompile(`^coc7$`)
 
 	defaultDiceSides = 100
 	diceMutex        sync.RWMutex
@@ -330,16 +336,41 @@ func processCommand(cmd string) string {
 		return processSanCheck(cmd)
 	case cmd == "coc":
 		return processCoC()
+	case cmd == "coc7":
+		return processCoC7()
 	case raRegex.MatchString(cmd):
 		return processRACheck(cmd)
 	case rcRegex.MatchString(cmd):
 		return processRCCheck(cmd)
+	case rbRegex.MatchString(cmd):
+		return processRBCheck(cmd)
 	case reasonRollRegex.MatchString(cmd):
 		return processReasonRoll(cmd)
 	case setDiceRegex.MatchString(cmd):
 		return processSetDice(cmd)
+	case enRegex.MatchString(cmd):
+		return processEnCheck(cmd)
+	case tiRegex.MatchString(cmd):
+		return processTICheck()
+	case liRegex.MatchString(cmd):
+		return processLICheck()
+	case stRegex.MatchString(cmd):
+		return processStCheck(cmd)
 	case cmd == "help":
-		return "COC指令帮助:\n.r[骰子指令] 掷骰\n.coc 生成调查员\n.sc [成功损失]/[失败损失] 理智检定\n.ra [技能值] COCTRPG检定\n.rc [技能值] COC7th核心规则检定\n.r[理由] 带理由的投掷\n.set[数字] 设置默认骰子面数(如.set6)"
+		return "COC指令帮助:\n" +
+			".r[骰子指令] 掷骰\n" +
+			".coc 生成调查员(6版规则)\n" +
+			".coc7 生成调查员(7版规则)\n" +
+			".sc [成功损失]/[失败损失] 理智检定\n" +
+			".ra [技能值] COCTRPG检定\n" +
+			".rc [技能值] COC7th核心规则检定\n" +
+			".rb [技能值] 奖励骰检定\n" +
+			".en [技能值] 技能成长检定\n" +
+			".ti 临时疯狂症状\n" +
+			".li 总结性疯狂症状\n" +
+			".st [技能名] [数值] 记录技能属性(可多个)\n" +
+			".r[理由] 带理由的投掷\n" +
+			".set[数字] 设置默认骰子面数(如.set6)"
 	default:
 		return "未知指令，请输入.help查看帮助"
 	}
@@ -412,6 +443,43 @@ func processRACheck(cmd string) string {
 	return result
 }
 
+func processRBCheck(cmd string) string {
+	matches := rbRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的rb指令格式，正确格式：.rb 技能值"
+	}
+
+	skillValue, err := strconv.Atoi(matches[1])
+	if err != nil || skillValue < 1 || skillValue > 100 {
+		return "技能值必须为1-100的整数"
+	}
+
+	// 生成奖励骰
+	bonusDice := rand.Intn(10) * 10
+	roll := rand.Intn(100) + 1
+	effectiveRoll := roll
+	if bonusDice < roll {
+		effectiveRoll = bonusDice
+	}
+
+	result := fmt.Sprintf("奖励骰检定rb %d → 原始值:%d 奖励骰:%d 最终值:%d", skillValue, roll, bonusDice, effectiveRoll)
+
+	if effectiveRoll <= skillValue {
+		if effectiveRoll <= 5 {
+			result += " 大成功！"
+		} else {
+			result += " 成功"
+		}
+	} else {
+		if effectiveRoll >= 96 {
+			result += " 大失败！"
+		} else {
+			result += " 失败"
+		}
+	}
+	return result
+}
+
 func processRCCheck(cmd string) string {
 	matches := rcRegex.FindStringSubmatch(cmd)
 	if len(matches) < 2 {
@@ -453,6 +521,96 @@ func processRCCheck(cmd string) string {
 		result += " 失败"
 	}
 	return result
+}
+
+func processEnCheck(cmd string) string {
+	matches := enRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的en指令格式，正确格式：.en 技能值"
+	}
+
+	skillValue, err := strconv.Atoi(matches[1])
+	if err != nil || skillValue < 1 || skillValue > 100 {
+		return "技能值必须为1-100的整数"
+	}
+
+	roll := rand.Intn(100) + 1
+	if roll > skillValue {
+		increase := rand.Intn(10) + 1
+		newSkill := skillValue + increase
+		if newSkill > 100 {
+			newSkill = 100
+		}
+		return fmt.Sprintf("技能成长检定en %d → %d/%d 成功！技能提升%d点，新值:%d", skillValue, roll, skillValue, increase, newSkill)
+	}
+	return fmt.Sprintf("技能成长检定en %d → %d/%d 失败", skillValue, roll, skillValue)
+}
+
+func processTICheck() string {
+	symptoms := []string{
+		"1. 失忆: 调查员会发现自己只记得最后身处的安全地点，却没有任何来到这里的记忆。",
+		"2. 假性残疾: 调查员陷入了心理性的失明，失聪以及躯体缺失感中。",
+		"3. 暴力倾向: 调查员陷入了六亲不认的暴力行为中。",
+		"4. 偏执: 调查员陷入了严重的偏执妄想之中。",
+		"5. 人际依赖: 调查员因为一些原因而将他人误认为了他重要的人。",
+		"6. 昏厥: 调查员当场昏倒。",
+		"7. 逃避行为: 调查员会用任何的手段试图逃离现在所处的位置。",
+		"8. 竭嘶底里: 调查员表现出大笑，哭泣，嘶吼，害怕等的极端情绪表现。",
+		"9. 恐惧: 调查员投一个D100或者由守秘人选择，来从恐惧症状表中选择一个恐惧源。",
+		"10. 狂躁: 调查员投一个D100或者由守秘人选择，来从狂躁症状表中选择一个狂躁的表现。",
+	}
+	roll := rand.Intn(10)
+	return "临时疯狂症状:\n" + symptoms[roll]
+}
+
+func processLICheck() string {
+	symptoms := []string{
+		"1. 失忆: 回过神来，调查员们发现自己身处一个陌生的地方，并忘记了自己是谁。",
+		"2. 被窃: 调查员在1D10小时后恢复清醒，发觉自己被盗，身体毫发无损。",
+		"3. 遍体鳞伤: 调查员在1D10小时后恢复清醒，发现自己身上满是拳痕和瘀伤。",
+		"4. 暴力倾向: 调查员陷入强烈的暴力与破坏欲之中。",
+		"5. 极端信念: 调查员在1D10小时后恢复清醒，遵循着某个启示。",
+		"6. 重要之人: 调查员在1D10小时后恢复清醒，决定与某人或某物建立深厚的联系。",
+		"7. 被收容: 调查员在1D10小时后恢复清醒，发现自己在监狱或精神病院。",
+		"8. 逃避行为: 调查员恢复清醒时发现自己在陌生的地方，可能无意识旅行了很远。",
+		"9. 恐惧: 投一个D100或者由守秘人选择，来从恐惧症状表中选择一个恐惧源。",
+		"10. 狂躁: 投一个D100或者由守秘人选择，来从狂躁症状表中选择一个狂躁的表现。",
+	}
+	roll := rand.Intn(10)
+	return "总结性疯狂症状:\n" + symptoms[roll]
+}
+
+func processStCheck(cmd string) string {
+	matches := stRegex.FindStringSubmatch(cmd)
+	if len(matches) < 3 {
+		return "无效的st指令格式，正确格式：.st [技能名] [数值] (可多个)"
+	}
+
+	var result strings.Builder
+	result.WriteString("记录属性:\n")
+
+	for i := 1; i < len(matches); i += 2 {
+		if i+1 >= len(matches) {
+			break
+		}
+
+		skillName := strings.TrimSpace(matches[i])
+		skillValue := strings.TrimSpace(matches[i+1])
+
+		if skillName == "" || skillValue == "" {
+			continue
+		}
+
+		value, err := strconv.Atoi(skillValue)
+		if err != nil {
+			result.WriteString(fmt.Sprintf("无效数值: %s = %s\n", skillName, skillValue))
+			continue
+		}
+
+		result.WriteString(fmt.Sprintf("%s = %d\n", skillName, value))
+	}
+
+	return result.String()
 }
 
 func processRoll(cmd string) string {
@@ -592,7 +750,34 @@ func processCoC() string {
 		}
 		attributes = append(attributes, fmt.Sprintf("%s: %d", attr, value))
 	}
-	return "调查员属性:\n" + strings.Join(attributes, "\n")
+	return "调查员属性(6版规则):\n" + strings.Join(attributes, "\n")
+}
+
+func processCoC7() string {
+	var attributes []string
+	for _, attr := range cocAttributes {
+		var value int
+		switch attr {
+		case "STR", "CON":
+			value = rand.Intn(6)*5 + 30
+		case "SIZ":
+			value = rand.Intn(6)+rand.Intn(6)+6
+		case "DEX":
+			value = rand.Intn(6)*5 + 30
+		case "APP":
+			value = rand.Intn(6)*5 + 30
+		case "INT":
+			value = rand.Intn(6)*5 + 50
+		case "POW":
+			value = rand.Intn(6)*5 + 30
+		case "EDU":
+			value = rand.Intn(6)*5 + 30
+		case "LUK":
+			value = rand.Intn(6)*5 + 30
+		}
+		attributes = append(attributes, fmt.Sprintf("%s: %d", attr, value))
+	}
+	return "调查员属性(7版规则):\n" + strings.Join(attributes, "\n")
 }
 
 func processSanCheck(cmd string) string {
