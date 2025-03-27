@@ -60,6 +60,8 @@ var (
 
 	rollRegex = regexp.MustCompile(`^r\s*(\d+)d(\d+)([\+\-]\d+)?$`)
 	scRegex   = regexp.MustCompile(`sc\s+(\d+)/(\d+)`)
+	raRegex   = regexp.MustCompile(`^ra\s+(\d+)$`)
+	rcRegex   = regexp.MustCompile(`^rc\s+(\d+)$`)
 
 	ErrMaxRetries  = errors.New("maximum retry attempts reached")
 	ErrInvalidMsg  = errors.New("invalid message format")
@@ -318,15 +320,92 @@ func processCommand(cmd string) string {
 	switch {
 	case rollRegex.MatchString(cmd):
 		return processRoll(cmd)
-	case strings.HasPrefix(cmd, "coc"):
-		return processCoC()
 	case scRegex.MatchString(cmd):
 		return processSanCheck(cmd)
+	case cmd == "coc":
+		return processCoC()
+	case raRegex.MatchString(cmd):
+		return processRACheck(cmd)
+	case rcRegex.MatchString(cmd):
+		return processRCCheck(cmd)
 	case cmd == "help":
-		return "COC指令帮助:\n.r[骰子指令] 掷骰\n.coc 生成调查员\n.sc [成功损失]/[失败损失] 理智检定"
+		return "COC指令帮助:\n.r[骰子指令] 掷骰\n.coc 生成调查员\n.sc [成功损失]/[失败损失] 理智检定\n.ra [技能值] COCTRPG检定\n.rc [技能值] COC7th核心规则检定"
 	default:
 		return "未知指令，请输入.help查看帮助"
 	}
+}
+
+func processRACheck(cmd string) string {
+	matches := raRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的ra指令格式，正确格式：.ra 技能值"
+	}
+
+	skillValue, err := strconv.Atoi(matches[1])
+	if err != nil || skillValue < 1 || skillValue > 100 {
+		return "技能值必须为1-100的整数"
+	}
+
+	roll := rand.Intn(100) + 1
+	result := fmt.Sprintf("检定ra %d → %d", skillValue, roll)
+
+	if roll <= skillValue {
+		if roll <= 5 {
+			result += " 大成功！"
+		} else {
+			result += " 成功"
+		}
+	} else {
+		if roll >= 96 {
+			result += " 大失败！"
+		} else {
+			result += " 失败"
+		}
+	}
+	return result
+}
+
+func processRCCheck(cmd string) string {
+	matches := rcRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的rc指令格式，正确格式：.rc 技能值"
+	}
+
+	skillValue, err := strconv.Atoi(matches[1])
+	if err != nil || skillValue < 1 || skillValue > 100 {
+		return "技能值必须为1-100的整数"
+	}
+
+	roll := rand.Intn(100) + 1
+	result := fmt.Sprintf("检定rc %d → %d", skillValue, roll)
+
+	success := roll <= skillValue
+	var critical bool
+	if skillValue <= 50 {
+		critical = roll <= 5
+	} else {
+		critical = roll <= skillValue/5
+	}
+	critical = critical && roll <= 95
+	extreme := success && (roll <= skillValue/5)
+	hard := success && (roll <= skillValue/2)
+	fumble := roll == 100 || (roll >= 96 && !success)
+
+	switch {
+	case success && critical:
+		result += " 大成功！"
+	case success && extreme:
+		result += " 极难成功"
+	case success && hard:
+		result += " 困难成功"
+	case success:
+		result += " 成功"
+	case fumble:
+		result += " 大失败！"
+	default:
+		result += " 失败"
+	}
+	return result
 }
 
 func processRoll(cmd string) string {
