@@ -47,6 +47,14 @@ type ResponseMessage struct {
 	Params interface{} `json:"params"`
 }
 
+type CommandRequest struct {
+	Command string `json:"command"`
+}
+
+type CommandResponse struct {
+	Response string `json:"response"`
+}
+
 var (
 	upgrader = websocket.Upgrader{
 		CheckOrigin: func(r *http.Request) bool { return true },
@@ -224,6 +232,7 @@ func parseIncomingMessage(data []byte) (*OneBotMessage, error) {
 func startHTTPServer() {
 	http.HandleFunc("/", serveStatic)
 	http.HandleFunc("/ws", handleWebSocket)
+	http.HandleFunc("/command", handleCommand)
 	log.Printf("Web服务器已启动 :%s", appConfig.HTTPPort)
 	if err := http.ListenAndServe(":"+appConfig.HTTPPort, nil); err != nil {
 		log.Fatalf("HTTP服务器错误: %v", err)
@@ -231,12 +240,28 @@ func startHTTPServer() {
 }
 
 func serveStatic(w http.ResponseWriter, r *http.Request) {
-	path := filepath.Join("web", filepath.Clean(r.URL.Path))
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		http.ServeFile(w, r, filepath.Join("web", "index.html"))
+	path := filepath.Clean(r.URL.Path)
+	if path == "/" || path == "/index.html" {
+		http.ServeFile(w, r, "UI.html")
 		return
 	}
 	http.ServeFile(w, r, path)
+}
+
+func handleCommand(w http.ResponseWriter, r *http.Request) {
+	if r.Method != "POST" {
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+		return
+	}
+
+	var req CommandRequest
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	response := processCommand(req.Command)
+	json.NewEncoder(w).Encode(CommandResponse{Response: response})
 }
 
 func handleWebSocket(w http.ResponseWriter, r *http.Request) {
@@ -259,12 +284,24 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 		}()
 
 		for {
-			_, _, err := conn.ReadMessage()
+			_, message, err := conn.ReadMessage()
 			if err != nil {
 				if !websocket.IsCloseError(err, websocket.CloseNormalClosure) {
 					log.Printf("WebSocket读取错误: %v", err)
 				}
 				break
+			}
+
+			// 处理从Web界面收到的消息
+			response := processCommand(string(message))
+			if err := conn.WriteMessage(websocket.TextMessage, []byte(response)); err != nil {
+				log.Printf("WebSocket写入错误: %v", err)
+				break
+			}
+
+			// 同时发送到QQ
+			if err := sendToQQ(response); err != nil {
+				log.Printf("发送到QQ失败: %v", err)
 			}
 		}
 	}()
