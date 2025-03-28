@@ -22,7 +22,6 @@ import (
 type Config struct {
 	HTTPPort  string `env:"HTTP_PORT" envDefault:"8088"`
 	QQWSURL   string `env:"QQ_WS_URL" envDefault:"ws://127.0.0.1:3009"`
-	LocalWSURL string `env:"LOCAL_WS_URL" envDefault:"ws://127.0.0.1:3005"`
 	QQGroupID int64  `env:"QQ_GROUP_ID"`
 }
 
@@ -65,20 +64,20 @@ var (
 	webMutex      sync.RWMutex
 	cocAttributes = [...]string{"STR", "CON", "SIZ", "DEX", "APP", "INT", "POW", "EDU", "LUK"}
 	qqManager     *ConnectionManager
-	localManager  *ConnectionManager
 	appConfig     *Config
 
-	rollRegex       = regexp.MustCompile(`^r\s*((?:\d*d?\d+[\+\-\*]\d+)+|(?:\d*d\d+(?:[\+\-\*]\d+)*)+|(?:\d+[\+\-\*]\d+)+)$`)
+	rollRegex       = regexp.MustCompile(`^r\s*((\d+)#)?\s*((?:\d*d?\d+[\+\-\*]\d+)+|(?:\d*d\d+(?:[\+\-\*]\d+)*)+|(?:\d+[\+\-\*]\d+)+)$`)
 	scRegex         = regexp.MustCompile(`sc\s+(\d+)/(\d+)`)
 	raRegex         = regexp.MustCompile(`^ra\s+(\d+)$`)
 	rcRegex         = regexp.MustCompile(`^rc\s+(\d+)$`)
 	rbRegex         = regexp.MustCompile(`^rb\s+(\d+)$`)
+	rhRegex         = regexp.MustCompile(`^rh$`)
 	reasonRollRegex = regexp.MustCompile(`^r(d?)\s*(.*)$`)
 	setDiceRegex    = regexp.MustCompile(`^set(\d+)$`)
 	enRegex         = regexp.MustCompile(`^en\s+(\d+)$`)
 	tiRegex         = regexp.MustCompile(`^ti$`)
 	liRegex         = regexp.MustCompile(`^li$`)
-	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
+	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
 	coc7Regex       = regexp.MustCompile(`^coc7$`)
 
 	defaultDiceSides = 100
@@ -170,25 +169,17 @@ func main() {
 		log.Printf("配置加载错误: %v", err)
 		log.Println("使用默认配置继续运行...")
 		appConfig = &Config{
-			HTTPPort:   "8088",
-			QQWSURL:    "ws://127.0.0.1:3009",
-			LocalWSURL: "ws://127.0.0.1:3005",
-			QQGroupID:  0,
+			HTTPPort:  "8088",
+			QQWSURL:   "ws://127.0.0.1:3009",
+			QQGroupID: 0,
 		}
 	}
 
 	qqManager = NewConnectionManager(appConfig.QQWSURL, 5)
-	localManager = NewConnectionManager(appConfig.LocalWSURL, 5)
 	defer qqManager.Close()
-	defer localManager.Close()
 
 	if err := qqManager.Connect(); err != nil {
 		log.Printf("初始化QQ连接失败: %v", err)
-		log.Println("将在消息处理时尝试重新连接...")
-	}
-
-	if err := localManager.Connect(); err != nil {
-		log.Printf("初始化本地Web UI连接失败: %v", err)
 		log.Println("将在消息处理时尝试重新连接...")
 	}
 
@@ -302,12 +293,14 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
+			// 处理从Web界面收到的消息
 			response := processCommand(string(message))
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(response)); err != nil {
 				log.Printf("WebSocket写入错误: %v", err)
 				break
 			}
 
+			// 同时发送到QQ
 			if err := sendToQQ(response); err != nil {
 				log.Printf("发送到QQ失败: %v", err)
 			}
@@ -387,6 +380,8 @@ func processCommand(cmd string) string {
 		return processRCCheck(cmd)
 	case rbRegex.MatchString(cmd):
 		return processRBCheck(cmd)
+	case rhRegex.MatchString(cmd):
+		return "rh" // Special case handled in handleMessage
 	case reasonRollRegex.MatchString(cmd):
 		return processReasonRoll(cmd)
 	case setDiceRegex.MatchString(cmd):
@@ -402,6 +397,7 @@ func processCommand(cmd string) string {
 	case cmd == "help":
 		return "COC指令帮助:\n" +
 			".r[骰子指令] 掷骰\n" +
+			".rh 暗骰(仅群聊)\n" +
 			".coc7 生成调查员(7版规则)\n" +
 			".sc [成功损失]/[失败损失] 理智检定\n" +
 			".ra [技能值] COCTRPG检定\n" +
@@ -416,6 +412,153 @@ func processCommand(cmd string) string {
 	default:
 		return "未知指令，请输入.help查看帮助"
 	}
+}
+
+func processRoll(cmd string) string {
+	// 解析多轮次投掷
+	matches := rollRegex.FindStringSubmatch(cmd)
+	if len(matches) < 4 {
+		return "无效的骰子指令格式"
+	}
+
+	rounds := 1
+	if matches[2] != "" {
+		var err error
+		rounds, err = strconv.Atoi(matches[2])
+		if err != nil || rounds < 1 || rounds > 10 {
+			return "轮次必须为1-10的整数"
+		}
+	}
+	expression := strings.TrimSpace(matches[3])
+
+	var results []string
+	for i := 0; i < rounds; i++ {
+		result, err := evaluateRollExpression(expression)
+		if err != nil {
+			return err.Error()
+		}
+		results = append(results, fmt.Sprintf("第%d轮: %s", i+1, result))
+	}
+
+	if rounds > 1 {
+		return fmt.Sprintf("%d轮投掷结果:\n%s", rounds, strings.Join(results, "\n"))
+	}
+	return results[0]
+}
+
+func evaluateRollExpression(expr string) (string, error) {
+	// 处理简单骰子表达式
+	if strings.Contains(expr, "d") {
+		parts := strings.FieldsFunc(expr, func(r rune) bool {
+			return r == '+' || r == '-' || r == '*'
+		})
+		ops := make([]string, 0)
+		for _, r := range expr {
+			if r == '+' || r == '-' || r == '*' {
+				ops = append(ops, string(r))
+			}
+		}
+
+		var results []string
+		total := 0
+		lastOp := "+"
+
+		for i, part := range parts {
+			if i > 0 && i-1 < len(ops) {
+				lastOp = ops[i-1]
+			}
+
+			// 处理单个骰子表达式
+			if strings.Contains(part, "d") {
+				diceParts := strings.Split(part, "d")
+				diceNum := 1
+				diceSides := 0
+				var err error
+
+				if diceParts[0] != "" {
+					diceNum, err = strconv.Atoi(diceParts[0])
+					if err != nil {
+						return "", errors.New("无效的骰子数量")
+					}
+				}
+
+				if len(diceParts) < 2 {
+					return "", errors.New("无效的骰子表达式")
+				}
+
+				diceSides, err = strconv.Atoi(diceParts[1])
+				if err != nil {
+					return "", errors.New("无效的骰子面数")
+				}
+
+				if diceNum <= 0 || diceSides <= 0 {
+					return "", errors.New("骰子数量和面数必须为正整数")
+				}
+
+				var rolls []int
+				sum := 0
+				for j := 0; j < diceNum; j++ {
+					roll := rand.Intn(diceSides) + 1
+					rolls = append(rolls, roll)
+					sum += roll
+				}
+
+				// 应用操作符
+				switch lastOp {
+				case "+":
+					total += sum
+				case "-":
+					total -= sum
+				case "*":
+					total *= sum
+				}
+
+				results = append(results, fmt.Sprintf("%dd%d: %v = %d", diceNum, diceSides, rolls, sum))
+			} else {
+				// 处理纯数字
+				num, err := strconv.Atoi(part)
+				if err != nil {
+					return "", errors.New("无效的数字")
+				}
+
+				switch lastOp {
+				case "+":
+					total += num
+				case "-":
+					total -= num
+				case "*":
+					total *= num
+				}
+
+				results = append(results, fmt.Sprintf("%d", num))
+			}
+		}
+
+		// 构建结果字符串
+		var builder strings.Builder
+		builder.WriteString("掷骰: ")
+		for i, res := range results {
+			if i > 0 {
+				builder.WriteString(fmt.Sprintf(" %s ", ops[i-1]))
+			}
+			builder.WriteString(res)
+		}
+		builder.WriteString(fmt.Sprintf(" = %d", total))
+		return builder.String(), nil
+	}
+
+	// 处理简单数字情况
+	diceMutex.RLock()
+	sides := defaultDiceSides
+	diceMutex.RUnlock()
+
+	num, err := strconv.Atoi(expr)
+	if err != nil {
+		return "", errors.New("无效的骰子指令格式")
+	}
+
+	roll := rand.Intn(sides) + 1
+	return fmt.Sprintf("1D%d: %d", sides, roll), nil
 }
 
 func processSetDice(cmd string) string {
@@ -496,6 +639,7 @@ func processRBCheck(cmd string) string {
 		return "技能值必须为1-100的整数"
 	}
 
+	// 生成奖励骰
 	bonusDice := rand.Intn(10) * 10
 	roll := rand.Intn(100) + 1
 	effectiveRoll := roll
@@ -654,118 +798,6 @@ func processStCheck(cmd string) string {
 	return result.String()
 }
 
-func processRoll(cmd string) string {
-	cmd = strings.TrimPrefix(cmd, "r")
-	cmd = strings.TrimSpace(cmd)
-
-	if strings.Contains(cmd, "d") {
-		parts := strings.FieldsFunc(cmd, func(r rune) bool {
-			return r == '+' || r == '-' || r == '*'
-		})
-		ops := make([]string, 0)
-		for _, r := range cmd {
-			if r == '+' || r == '-' || r == '*' {
-				ops = append(ops, string(r))
-			}
-		}
-
-		var results []string
-		total := 0
-		lastOp := "+"
-
-		for i, part := range parts {
-			if i > 0 && i-1 < len(ops) {
-				lastOp = ops[i-1]
-			}
-
-			if strings.Contains(part, "d") {
-				diceParts := strings.Split(part, "d")
-				diceNum := 1
-				diceSides := 0
-				var err error
-
-				if diceParts[0] != "" {
-					diceNum, err = strconv.Atoi(diceParts[0])
-					if err != nil {
-						return "无效的骰子数量"
-					}
-				}
-
-				if len(diceParts) < 2 {
-					return "无效的骰子表达式"
-				}
-
-				diceSides, err = strconv.Atoi(diceParts[1])
-				if err != nil {
-					return "无效的骰子面数"
-				}
-
-				if diceNum <= 0 || diceSides <= 0 {
-					return "骰子数量和面数必须为正整数"
-				}
-
-				var rolls []int
-				sum := 0
-				for j := 0; j < diceNum; j++ {
-					roll := rand.Intn(diceSides) + 1
-					rolls = append(rolls, roll)
-					sum += roll
-				}
-
-				switch lastOp {
-				case "+":
-					total += sum
-				case "-":
-					total -= sum
-				case "*":
-					total *= sum
-				}
-
-				results = append(results, fmt.Sprintf("%dd%d: %v = %d", diceNum, diceSides, rolls, sum))
-			} else {
-				num, err := strconv.Atoi(part)
-				if err != nil {
-					return "无效的数字"
-				}
-
-				switch lastOp {
-				case "+":
-					total += num
-				case "-":
-					total -= num
-				case "*":
-					total *= num
-				}
-
-				results = append(results, fmt.Sprintf("%d", num))
-			}
-		}
-
-		var builder strings.Builder
-		builder.WriteString("掷骰: ")
-		for i, res := range results {
-			if i > 0 {
-				builder.WriteString(fmt.Sprintf(" %s ", ops[i-1]))
-			}
-			builder.WriteString(res)
-		}
-		builder.WriteString(fmt.Sprintf(" = %d", total))
-		return builder.String()
-	}
-
-	diceMutex.RLock()
-	sides := defaultDiceSides
-	diceMutex.RUnlock()
-
-	num, err := strconv.Atoi(cmd)
-	if err != nil {
-		return "无效的骰子指令格式"
-	}
-
-	roll := rand.Intn(sides) + 1
-	return fmt.Sprintf("掷骰 1D%d: %d", sides, roll)
-}
-
 func processCoC7() string {
 	var attributes []string
 	for _, attr := range cocAttributes {
@@ -861,6 +893,37 @@ func sendToQQ(message string) error {
 }
 
 func sendResponse(conn *websocket.Conn, msg *OneBotMessage, response string) error {
+	// 处理暗骰指令
+	if strings.TrimPrefix(msg.Message.(string), ".") == "rh" && msg.MessageType == "group" {
+		// 在群里发送提示消息
+		groupMsg := ResponseMessage{
+			Action: "send_msg",
+			Params: map[string]interface{}{
+				"message_type": "group",
+				"group_id":     msg.GroupID,
+				"message":      "事情似乎发生了什么变化",
+			},
+		}
+		if err := conn.WriteJSON(groupMsg); err != nil {
+			return fmt.Errorf("发送群消息失败: %w", err)
+		}
+
+		// 向用户发送私聊消息
+		roll := rand.Intn(100) + 1
+		privateMsg := ResponseMessage{
+			Action: "send_msg",
+			Params: map[string]interface{}{
+				"message_type": "private",
+				"user_id":      msg.UserID,
+				"message":      fmt.Sprintf("在群 %d 中的暗骰结果是1D100=%d", msg.GroupID, roll),
+			},
+		}
+		if err := conn.WriteJSON(privateMsg); err != nil {
+			return fmt.Errorf("发送私聊消息失败: %w", err)
+		}
+		return nil
+	}
+
 	params := map[string]interface{}{
 		"message_type": msg.MessageType,
 		"message":      response,
