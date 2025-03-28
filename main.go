@@ -22,6 +22,7 @@ import (
 type Config struct {
 	HTTPPort  string `env:"HTTP_PORT" envDefault:"8088"`
 	QQWSURL   string `env:"QQ_WS_URL" envDefault:"ws://127.0.0.1:3009"`
+	LocalWSURL string `env:"LOCAL_WS_URL" envDefault:"ws://127.0.0.1:3005"`
 	QQGroupID int64  `env:"QQ_GROUP_ID"`
 }
 
@@ -64,6 +65,7 @@ var (
 	webMutex      sync.RWMutex
 	cocAttributes = [...]string{"STR", "CON", "SIZ", "DEX", "APP", "INT", "POW", "EDU", "LUK"}
 	qqManager     *ConnectionManager
+	localManager  *ConnectionManager
 	appConfig     *Config
 
 	rollRegex       = regexp.MustCompile(`^r\s*((?:\d*d?\d+[\+\-\*]\d+)+|(?:\d*d\d+(?:[\+\-\*]\d+)*)+|(?:\d+[\+\-\*]\d+)+)$`)
@@ -76,7 +78,7 @@ var (
 	enRegex         = regexp.MustCompile(`^en\s+(\d+)$`)
 	tiRegex         = regexp.MustCompile(`^ti$`)
 	liRegex         = regexp.MustCompile(`^li$`)
-	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
+	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
 	coc7Regex       = regexp.MustCompile(`^coc7$`)
 
 	defaultDiceSides = 100
@@ -168,17 +170,25 @@ func main() {
 		log.Printf("配置加载错误: %v", err)
 		log.Println("使用默认配置继续运行...")
 		appConfig = &Config{
-			HTTPPort:  "8088",
-			QQWSURL:   "ws://127.0.0.1:3009",
-			QQGroupID: 0,
+			HTTPPort:   "8088",
+			QQWSURL:    "ws://127.0.0.1:3009",
+			LocalWSURL: "ws://127.0.0.1:3005",
+			QQGroupID:  0,
 		}
 	}
 
 	qqManager = NewConnectionManager(appConfig.QQWSURL, 5)
+	localManager = NewConnectionManager(appConfig.LocalWSURL, 5)
 	defer qqManager.Close()
+	defer localManager.Close()
 
 	if err := qqManager.Connect(); err != nil {
 		log.Printf("初始化QQ连接失败: %v", err)
+		log.Println("将在消息处理时尝试重新连接...")
+	}
+
+	if err := localManager.Connect(); err != nil {
+		log.Printf("初始化本地Web UI连接失败: %v", err)
 		log.Println("将在消息处理时尝试重新连接...")
 	}
 
@@ -292,14 +302,12 @@ func handleWebSocket(w http.ResponseWriter, r *http.Request) {
 				break
 			}
 
-			// 处理从Web界面收到的消息
 			response := processCommand(string(message))
 			if err := conn.WriteMessage(websocket.TextMessage, []byte(response)); err != nil {
 				log.Printf("WebSocket写入错误: %v", err)
 				break
 			}
 
-			// 同时发送到QQ
 			if err := sendToQQ(response); err != nil {
 				log.Printf("发送到QQ失败: %v", err)
 			}
@@ -371,8 +379,6 @@ func processCommand(cmd string) string {
 		return processRoll(cmd)
 	case scRegex.MatchString(cmd):
 		return processSanCheck(cmd)
-	case cmd == "coc":
-		return processCoC()
 	case cmd == "coc7":
 		return processCoC7()
 	case raRegex.MatchString(cmd):
@@ -396,7 +402,6 @@ func processCommand(cmd string) string {
 	case cmd == "help":
 		return "COC指令帮助:\n" +
 			".r[骰子指令] 掷骰\n" +
-			".coc 生成调查员(6版规则)\n" +
 			".coc7 生成调查员(7版规则)\n" +
 			".sc [成功损失]/[失败损失] 理智检定\n" +
 			".ra [技能值] COCTRPG检定\n" +
@@ -491,7 +496,6 @@ func processRBCheck(cmd string) string {
 		return "技能值必须为1-100的整数"
 	}
 
-	// 生成奖励骰
 	bonusDice := rand.Intn(10) * 10
 	roll := rand.Intn(100) + 1
 	effectiveRoll := roll
@@ -651,11 +655,9 @@ func processStCheck(cmd string) string {
 }
 
 func processRoll(cmd string) string {
-	// 移除命令前缀和空白
 	cmd = strings.TrimPrefix(cmd, "r")
 	cmd = strings.TrimSpace(cmd)
 
-	// 处理简单骰子表达式
 	if strings.Contains(cmd, "d") {
 		parts := strings.FieldsFunc(cmd, func(r rune) bool {
 			return r == '+' || r == '-' || r == '*'
@@ -676,7 +678,6 @@ func processRoll(cmd string) string {
 				lastOp = ops[i-1]
 			}
 
-			// 处理单个骰子表达式
 			if strings.Contains(part, "d") {
 				diceParts := strings.Split(part, "d")
 				diceNum := 1
@@ -711,7 +712,6 @@ func processRoll(cmd string) string {
 					sum += roll
 				}
 
-				// 应用操作符
 				switch lastOp {
 				case "+":
 					total += sum
@@ -723,7 +723,6 @@ func processRoll(cmd string) string {
 
 				results = append(results, fmt.Sprintf("%dd%d: %v = %d", diceNum, diceSides, rolls, sum))
 			} else {
-				// 处理纯数字
 				num, err := strconv.Atoi(part)
 				if err != nil {
 					return "无效的数字"
@@ -742,7 +741,6 @@ func processRoll(cmd string) string {
 			}
 		}
 
-		// 构建结果字符串
 		var builder strings.Builder
 		builder.WriteString("掷骰: ")
 		for i, res := range results {
@@ -755,7 +753,6 @@ func processRoll(cmd string) string {
 		return builder.String()
 	}
 
-	// 处理简单数字情况
 	diceMutex.RLock()
 	sides := defaultDiceSides
 	diceMutex.RUnlock()
@@ -767,27 +764,6 @@ func processRoll(cmd string) string {
 
 	roll := rand.Intn(sides) + 1
 	return fmt.Sprintf("掷骰 1D%d: %d", sides, roll)
-}
-
-func processCoC() string {
-	var attributes []string
-	for _, attr := range cocAttributes {
-		var value int
-		switch attr {
-		case "STR", "CON", "SIZ", "DEX", "APP":
-			value = rand.Intn(6)*5 + 30
-		case "INT":
-			value = rand.Intn(6)*5 + 50
-		case "POW":
-			value = rand.Intn(6)*5 + 40
-		case "EDU":
-			value = rand.Intn(6)*5 + 50
-		case "LUK":
-			value = rand.Intn(6)*5 + 30
-		}
-		attributes = append(attributes, fmt.Sprintf("%s: %d", attr, value))
-	}
-	return "调查员属性(6版规则):\n" + strings.Join(attributes, "\n")
 }
 
 func processCoC7() string {
