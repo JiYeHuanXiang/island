@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Island：dice</title>
+    <title>Island:dice</title>
     <style>
         body {
             font-family: 'Segoe UI', system-ui, sans-serif;
@@ -104,6 +104,7 @@
             display: flex;
             gap: 12px;
             margin-bottom: 0.5rem;
+            align-items: center;
         }
         .settings-label {
             min-width: 100px;
@@ -124,6 +125,53 @@
             background: #fff3bf;
             color: #e67700;
         }
+        .switch-container {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        .switch {
+            position: relative;
+            display: inline-block;
+            width: 60px;
+            height: 34px;
+        }
+        .switch input {
+            opacity: 0;
+            width: 0;
+            height: 0;
+        }
+        .slider {
+            position: absolute;
+            cursor: pointer;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-color: #ccc;
+            transition: .4s;
+            border-radius: 34px;
+        }
+        .slider:before {
+            position: absolute;
+            content: "";
+            height: 26px;
+            width: 26px;
+            left: 4px;
+            bottom: 4px;
+            background-color: white;
+            transition: .4s;
+            border-radius: 50%;
+        }
+        input:checked + .slider {
+            background-color: #228be6;
+        }
+        input:checked + .slider:before {
+            transform: translateX(26px);
+        }
+        .switch-label {
+            font-weight: 500;
+        }
     </style>
 </head>
 <body>
@@ -133,6 +181,16 @@
             <div class="settings-label">WebSocket地址:</div>
             <input type="text" id="wsUrl" placeholder="ws://127.0.0.1:3009">
             <button onclick="connectWS()">连接</button>
+        </div>
+        <div class="settings-group">
+            <div class="settings-label">发送目标:</div>
+            <div class="switch-container">
+                <label class="switch">
+                    <input type="checkbox" id="sendToQQ">
+                    <span class="slider"></span>
+                </label>
+                <span class="switch-label" id="targetLabel">本地处理</span>
+            </div>
         </div>
         <div id="connectionStatus" class="status status-disconnected">未连接</div>
     </div>
@@ -149,11 +207,24 @@
         const input = document.getElementById('input');
         const wsUrlInput = document.getElementById('wsUrl');
         const connectionStatus = document.getElementById('connectionStatus');
+        const sendToQQCheckbox = document.getElementById('sendToQQ');
+        const targetLabel = document.getElementById('targetLabel');
 
-        // 从本地存储加载保存的WebSocket地址
+        // 从本地存储加载保存的设置
         if (localStorage.getItem('wsUrl')) {
             wsUrlInput.value = localStorage.getItem('wsUrl');
         }
+        if (localStorage.getItem('sendToQQ') === 'true') {
+            sendToQQCheckbox.checked = true;
+            targetLabel.textContent = '发送到QQ';
+        }
+
+        // 监听开关变化
+        sendToQQCheckbox.addEventListener('change', function() {
+            const isChecked = this.checked;
+            targetLabel.textContent = isChecked ? '发送到QQ' : '本地处理';
+            localStorage.setItem('sendToQQ', isChecked);
+        });
 
         function connectWS() {
             const url = wsUrlInput.value.trim();
@@ -201,10 +272,20 @@
             addMessage(command, 'command');
             input.value = '';
 
-            if (ws && ws.readyState === WebSocket.OPEN) {
-                ws.send(command);
+            const sendToQQ = sendToQQCheckbox.checked;
+            
+            if (sendToQQ) {
+                // 发送到QQ
+                if (ws && ws.readyState === WebSocket.OPEN) {
+                    ws.send(JSON.stringify({
+                        command: command,
+                        target: 'qq'
+                    }));
+                } else {
+                    addMessage('WebSocket未连接，无法发送到QQ', 'system');
+                }
             } else {
-                // 本地回退功能
+                // 本地处理
                 fetch('/command', {
                     method: 'POST',
                     headers: {
