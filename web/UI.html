@@ -1,7 +1,7 @@
 <!DOCTYPE html>
 <html>
 <head>
-    <title>Island:dice</title>
+    <title>Island:dice - COC</title>
     <style>
         body {
             font-family: 'Segoe UI', system-ui, sans-serif;
@@ -9,6 +9,18 @@
             margin: 2rem auto;
             padding: 0 20px;
             background: #f8f9fa;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 1.5rem;
+        }
+        .header h1 {
+            color: #228be6;
+            margin-bottom: 0.5rem;
+        }
+        .header p {
+            color: #495057;
+            margin-top: 0;
         }
         #output {
             height: 50vh;
@@ -172,9 +184,31 @@
         .switch-label {
             font-weight: 500;
         }
+        .help-section {
+            background: white;
+            border: 2px solid #e9ecef;
+            border-radius: 12px;
+            padding: 1rem;
+            margin-bottom: 1.5rem;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+        }
+        .help-title {
+            font-weight: 600;
+            margin-bottom: 0.5rem;
+            color: #495057;
+        }
+        .help-content {
+            font-size: 0.9rem;
+            line-height: 1.5;
+        }
     </style>
 </head>
 <body>
+    <div class="header">
+        <h1>Island:dice - COC骰子机器人</h1>
+        <p>一个AI制作的COC(克苏鲁的呼唤)TRPG骰子机器人</p>
+    </div>
+
     <div class="settings">
         <div class="settings-title">连接设置</div>
         <div class="settings-group">
@@ -193,6 +227,21 @@
             </div>
         </div>
         <div id="connectionStatus" class="status status-disconnected">未连接</div>
+    </div>
+
+    <div class="help-section">
+        <div class="help-title">使用说明</div>
+        <div class="help-content">
+            <p>1. 输入指令以进行骰子操作，例如：</p>
+            <ul>
+                <li><strong>.coc7</strong> - 生成7版COC调查员属性</li>
+                <li><strong>.ra 70</strong> - 进行技能值为70的检定</li>
+                <li><strong>.r 3d6</strong> - 投掷3个6面骰</li>
+                <li><strong>.sc 1/1d6</strong> - 理智检定</li>
+            </ul>
+            <p>2. 连接WebSocket后，可以切换"发送目标"将指令发送到QQ群</p>
+            <p>3. 输入<strong>.help</strong>查看完整指令列表</p>
+        </div>
     </div>
 
     <div id="output"></div>
