@@ -20,9 +20,9 @@ import (
 )
 
 type Config struct {
-	HTTPPort  string `env:"HTTP_PORT" envDefault:"8088"`
-	QQWSURL   string `env:"QQ_WS_URL" envDefault:"ws://127.0.0.1:3009"`
-	QQGroupID int64  `env:"QQ_GROUP_ID"`
+	HTTPPort  string  `env:"HTTP_PORT" envDefault:"8088"`
+	QQWSURL   string  `env:"QQ_WS_URL" envDefault:"ws://127.0.0.1:3009"`
+	QQGroupID []int64 `env:"QQ_GROUP_ID" envSeparator:","` // 修改为切片支持多个群组
 }
 
 type ConnectionManager struct {
@@ -35,11 +35,13 @@ type ConnectionManager struct {
 }
 
 type OneBotMessage struct {
-	PostType    string      `json:"post_type"`
-	MessageType string      `json:"message_type"`
-	Message     interface{} `json:"message"`
-	UserID      int64       `json:"user_id"`
-	GroupID     int64       `json:"group_id"`
+	PostType    string          `json:"post_type"`
+	MessageType string          `json:"message_type"`
+	Message     json.RawMessage `json:"message"` // 修改为RawMessage以便更灵活处理
+	UserID      int64           `json:"user_id"`
+	GroupID     int64           `json:"group_id"`
+	RawMessage  string          `json:"raw_message"`
+	SelfID      int64           `json:"self_id"`
 }
 
 type ResponseMessage struct {
@@ -77,8 +79,12 @@ var (
 	enRegex         = regexp.MustCompile(`^en\s+(\d+)$`)
 	tiRegex         = regexp.MustCompile(`^ti$`)
 	liRegex         = regexp.MustCompile(`^li$`)
-	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
+	stRegex         = regexp.MustCompile(`^st\s+([^\d]+)\s+(\d+)(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?(?:\s+([^\d]+)\s+(\d+))?$`)
 	coc7Regex       = regexp.MustCompile(`^coc7$`)
+	dndStatRegex    = regexp.MustCompile(`^dnd\s+(\w+)$`)
+	dndInitRegex    = regexp.MustCompile(`^init\s+(\d+)$`)
+	dndSaveRegex    = regexp.MustCompile(`^save\s+(\w+)$`)
+	dndCheckRegex   = regexp.MustCompile(`^check\s+(\w+)$`)
 
 	defaultDiceSides = 100
 	diceMutex        sync.RWMutex
@@ -153,10 +159,9 @@ func loadConfig() (*Config, error) {
 		return nil, fmt.Errorf("%w: %v", ErrConfigLoad, err)
 	}
 
-	if cfg.QQGroupID == 0 {
-		return nil, fmt.Errorf("%w: QQ_GROUP_ID is required", ErrConfigLoad)
+	if len(cfg.QQGroupID) == 0 {
+		log.Println("未配置QQ_GROUP_ID，将处理所有群组消息")
 	}
-
 	return &cfg, nil
 }
 
@@ -171,7 +176,7 @@ func main() {
 		appConfig = &Config{
 			HTTPPort:  "8088",
 			QQWSURL:   "ws://127.0.0.1:3009",
-			QQGroupID: 0,
+			QQGroupID: []int64{},
 		}
 	}
 
@@ -328,34 +333,30 @@ func handleMessage(conn *websocket.Conn, msg *OneBotMessage) {
 	broadcastToWeb(formatWebMessage(msg, response))
 }
 
-func extractMessageContent(msg interface{}) (string, error) {
-	switch m := msg.(type) {
-	case string:
-		return m, nil
-	case []interface{}:
-		var builder strings.Builder
-		for _, v := range m {
-			seg, ok := v.(map[string]interface{})
-			if !ok {
-				continue
-			}
-
-			if seg["type"] == "text" {
-				data, ok := seg["data"].(map[string]interface{})
-				if !ok {
-					continue
-				}
-
-				text, ok := data["text"].(string)
-				if ok {
-					builder.WriteString(text)
-				}
-			}
-		}
-		return builder.String(), nil
-	default:
-		return "", fmt.Errorf("%w: unexpected type %T", ErrInvalidMsg, msg)
+func extractMessageContent(msg json.RawMessage) (string, error) {
+	var messageSegments []struct {
+		Type string `json:"type"`
+		Data struct {
+			Text string `json:"text"`
+		} `json:"data"`
 	}
+
+	if err := json.Unmarshal(msg, &messageSegments); err != nil {
+		// 尝试解析为纯字符串
+		var text string
+		if err := json.Unmarshal(msg, &text); err != nil {
+			return "", fmt.Errorf("%w: %v", ErrInvalidMsg, err)
+		}
+		return text, nil
+	}
+
+	var builder strings.Builder
+	for _, seg := range messageSegments {
+		if seg.Type == "text" {
+			builder.WriteString(seg.Data.Text)
+		}
+	}
+	return builder.String(), nil
 }
 
 func formatWebMessage(msg *OneBotMessage, response string) string {
@@ -394,8 +395,17 @@ func processCommand(cmd string) string {
 		return processLICheck()
 	case stRegex.MatchString(cmd):
 		return processStCheck(cmd)
+	case dndStatRegex.MatchString(cmd):
+		return processDNDStat(cmd)
+	case dndInitRegex.MatchString(cmd):
+		return processDNDInit(cmd)
+	case dndSaveRegex.MatchString(cmd):
+		return processDNDSave(cmd)
+	case dndCheckRegex.MatchString(cmd):
+		return processDNDCheck(cmd)
 	case cmd == "help":
-		return "COC指令帮助:\n" +
+		return "TRPG指令帮助:\n" +
+			"=== COC指令 ===\n" +
 			".r[骰子指令] 掷骰\n" +
 			".rh 暗骰(仅群聊)\n" +
 			".coc7 生成调查员(7版规则)\n" +
@@ -408,14 +418,19 @@ func processCommand(cmd string) string {
 			".li 总结性疯狂症状\n" +
 			".st [技能名] [数值] 记录技能属性(可多个)\n" +
 			".r[理由] 带理由的投掷\n" +
-			".set[数字] 设置默认骰子面数(如.set6)"
+			".set[数字] 设置默认骰子面数(如.set6)\n\n" +
+			"=== DND指令 ===\n" +
+			".dnd [属性] 属性检定(如.dnd str)\n" +
+			".init [敏捷调整值] 先攻检定\n" +
+			".save [属性] 豁免检定(如.save con)\n" +
+			".check [技能] 技能检定(如.check stealth)\n" +
+			"可用属性: str, dex, con, int, wis, cha"
 	default:
 		return "未知指令，请输入.help查看帮助"
 	}
 }
 
 func processRoll(cmd string) string {
-	// 解析多轮次投掷
 	matches := rollRegex.FindStringSubmatch(cmd)
 	if len(matches) < 4 {
 		return "无效的骰子指令格式"
@@ -447,7 +462,6 @@ func processRoll(cmd string) string {
 }
 
 func evaluateRollExpression(expr string) (string, error) {
-	// 处理简单骰子表达式
 	if strings.Contains(expr, "d") {
 		parts := strings.FieldsFunc(expr, func(r rune) bool {
 			return r == '+' || r == '-' || r == '*'
@@ -468,7 +482,6 @@ func evaluateRollExpression(expr string) (string, error) {
 				lastOp = ops[i-1]
 			}
 
-			// 处理单个骰子表达式
 			if strings.Contains(part, "d") {
 				diceParts := strings.Split(part, "d")
 				diceNum := 1
@@ -503,7 +516,6 @@ func evaluateRollExpression(expr string) (string, error) {
 					sum += roll
 				}
 
-				// 应用操作符
 				switch lastOp {
 				case "+":
 					total += sum
@@ -515,7 +527,6 @@ func evaluateRollExpression(expr string) (string, error) {
 
 				results = append(results, fmt.Sprintf("%dd%d: %v = %d", diceNum, diceSides, rolls, sum))
 			} else {
-				// 处理纯数字
 				num, err := strconv.Atoi(part)
 				if err != nil {
 					return "", errors.New("无效的数字")
@@ -534,7 +545,6 @@ func evaluateRollExpression(expr string) (string, error) {
 			}
 		}
 
-		// 构建结果字符串
 		var builder strings.Builder
 		builder.WriteString("掷骰: ")
 		for i, res := range results {
@@ -547,7 +557,6 @@ func evaluateRollExpression(expr string) (string, error) {
 		return builder.String(), nil
 	}
 
-	// 处理简单数字情况
 	diceMutex.RLock()
 	sides := defaultDiceSides
 	diceMutex.RUnlock()
@@ -639,7 +648,6 @@ func processRBCheck(cmd string) string {
 		return "技能值必须为1-100的整数"
 	}
 
-	// 生成奖励骰
 	bonusDice := rand.Intn(10) * 10
 	roll := rand.Intn(100) + 1
 	effectiveRoll := roll
@@ -838,6 +846,87 @@ func processSanCheck(cmd string) string {
 	return result
 }
 
+// DND相关指令处理函数
+func processDNDStat(cmd string) string {
+	matches := dndStatRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的dnd指令格式，正确格式：.dnd [属性]"
+	}
+
+	attr := strings.ToLower(matches[1])
+	validAttrs := map[string]bool{
+		"str": true, "dex": true, "con": true,
+		"int": true, "wis": true, "cha": true,
+	}
+
+	if !validAttrs[attr] {
+		return "无效的属性，可用属性: str, dex, con, int, wis, cha"
+	}
+
+	modifier := rand.Intn(20) + 1
+	return fmt.Sprintf("DND %s属性检定: d20=%d", strings.ToUpper(attr), modifier)
+}
+
+func processDNDInit(cmd string) string {
+	matches := dndInitRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的init指令格式，正确格式：.init [敏捷调整值]"
+	}
+
+	dexMod, err := strconv.Atoi(matches[1])
+	if err != nil {
+		return "敏捷调整值必须是整数"
+	}
+
+	roll := rand.Intn(20) + 1
+	total := roll + dexMod
+	return fmt.Sprintf("先攻检定: d20(%d) + 敏捷调整(%d) = %d", roll, dexMod, total)
+}
+
+func processDNDSave(cmd string) string {
+	matches := dndSaveRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的save指令格式，正确格式：.save [属性]"
+	}
+
+	attr := strings.ToLower(matches[1])
+	validAttrs := map[string]bool{
+		"str": true, "dex": true, "con": true,
+		"int": true, "wis": true, "cha": true,
+	}
+
+	if !validAttrs[attr] {
+		return "无效的属性，可用属性: str, dex, con, int, wis, cha"
+	}
+
+	roll := rand.Intn(20) + 1
+	return fmt.Sprintf("DND %s豁免检定: d20=%d", strings.ToUpper(attr), roll)
+}
+
+func processDNDCheck(cmd string) string {
+	matches := dndCheckRegex.FindStringSubmatch(cmd)
+	if len(matches) < 2 {
+		return "无效的check指令格式，正确格式：.check [技能]"
+	}
+
+	skill := strings.ToLower(matches[1])
+	validSkills := map[string]bool{
+		"acrobatics": true, "animal": true, "arcana": true,
+		"athletics": true, "deception": true, "history": true,
+		"insight": true, "intimidation": true, "investigation": true,
+		"medicine": true, "nature": true, "perception": true,
+		"performance": true, "persuasion": true, "religion": true,
+		"sleight": true, "stealth": true, "survival": true,
+	}
+
+	if !validSkills[skill] {
+		return "无效的技能，可用技能: acrobatics, animal, arcana, athletics, deception, history, insight, intimidation, investigation, medicine, nature, perception, performance, persuasion, religion, sleight, stealth, survival"
+	}
+
+	roll := rand.Intn(20) + 1
+	return fmt.Sprintf("DND %s技能检定: d20=%d", strings.Title(skill), roll)
+}
+
 func broadcastToWeb(message string) {
 	webMutex.RLock()
 	defer webMutex.RUnlock()
@@ -875,11 +964,10 @@ func sendToQQ(message string) error {
 	}
 
 	resp := ResponseMessage{
-		Action: "send_msg",
+		Action: "send_group_msg",
 		Params: map[string]interface{}{
-			"message_type": "group",
-			"group_id":     appConfig.QQGroupID,
-			"message":      message,
+			"group_id": appConfig.QQGroupID,
+			"message":  message,
 		},
 	}
 
@@ -894,54 +982,38 @@ func sendToQQ(message string) error {
 
 func sendResponse(conn *websocket.Conn, msg *OneBotMessage, response string) error {
 	// 处理暗骰指令
-	if strings.TrimPrefix(msg.Message.(string), ".") == "rh" && msg.MessageType == "group" {
-		// 在群里发送提示消息
+	if strings.TrimPrefix(msg.RawMessage, ".") == "rh" && msg.MessageType == "group" {
 		groupMsg := ResponseMessage{
-			Action: "send_msg",
+			Action: "send_group_msg",
 			Params: map[string]interface{}{
-				"message_type": "group",
-				"group_id":     msg.GroupID,
-				"message":      "事情似乎发生了什么变化",
+				"group_id": msg.GroupID,
+				"message":  "事情似乎发生了什么变化",
 			},
 		}
 		if err := conn.WriteJSON(groupMsg); err != nil {
 			return fmt.Errorf("发送群消息失败: %w", err)
 		}
 
-		// 向用户发送私聊消息
 		roll := rand.Intn(100) + 1
 		privateMsg := ResponseMessage{
-			Action: "send_msg",
+			Action: "send_private_msg",
 			Params: map[string]interface{}{
-				"message_type": "private",
-				"user_id":      msg.UserID,
-				"message":      fmt.Sprintf("在群 %d 中的暗骰结果是1D100=%d", msg.GroupID, roll),
+				"user_id": msg.UserID,
+				"message": fmt.Sprintf("在群 %d 中的暗骰结果是1D100=%d", msg.GroupID, roll),
 			},
 		}
-		if err := conn.WriteJSON(privateMsg); err != nil {
-			return fmt.Errorf("发送私聊消息失败: %w", err)
-		}
-		return nil
-	}
-
-	params := map[string]interface{}{
-		"message_type": msg.MessageType,
-		"message":      response,
-	}
-
-	if msg.MessageType == "group" {
-		params["group_id"] = msg.GroupID
-	} else {
-		params["user_id"] = msg.UserID
+		return conn.WriteJSON(privateMsg)
 	}
 
 	resp := ResponseMessage{
 		Action: "send_msg",
-		Params: params,
+		Params: map[string]interface{}{
+			"message_type": msg.MessageType,
+			"user_id":      msg.UserID,
+			"group_id":     msg.GroupID,
+			"message":      response,
+		},
 	}
 
-	if err := conn.WriteJSON(resp); err != nil {
-		return fmt.Errorf("发送响应失败: %w", err)
-	}
-	return nil
+	return conn.WriteJSON(resp)
 }
