@@ -13,5 +13,5 @@
 |------|--------|
 | **主要开发者** | deepseekV3 |
 | **辅助开发者** | deepseekR1 |
-| **校验** | copilot（GPT-4o） |
+| **校验** | copilot（GPT-4o）,claude 3.7 thinking |
 
