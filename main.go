@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"island/parser"
 	"log"
 	"math/rand"
 	"net/http"
@@ -436,7 +437,7 @@ func processCommand(cmd string) string {
 func processRoll(cmd string) string {
 	matches := rollRegex.FindStringSubmatch(cmd)
 	if len(matches) < 4 {
-		return "无效的骰子指令格式"
+		return "无效的骰子指令格式，正确格式：.r [骰子表达式]"
 	}
 
 	rounds := 1
@@ -455,122 +456,37 @@ func processRoll(cmd string) string {
 		if err != nil {
 			return err.Error()
 		}
-		results = append(results, fmt.Sprintf("第%d轮: %s", i+1, result))
+		results = append(results, result)
 	}
-
-	if rounds > 1 {
-		return fmt.Sprintf("%d轮投掷结果:\n%s", rounds, strings.Join(results, "\n"))
-	}
-	return results[0]
+	return fmt.Sprintf("骰子结果: %s", strings.Join(results, "\n"))
 }
 
-func evaluateRollExpression(expr string) (string, error) {
-	if strings.Contains(expr, "d") {
-		parts := strings.FieldsFunc(expr, func(r rune) bool {
-			return r == '+' || r == '-' || r == '*'
-		})
-		ops := make([]string, 0)
-		for _, r := range expr {
-			if r == '+' || r == '-' || r == '*' {
-				ops = append(ops, string(r))
-			}
-		}
+func evaluateRollExpression(expression string) (string, error) {
+	if res := ParseAndEvaluate(expression)["过程"].(string); res != "" {
+		return res, nil
+	} else {
+		return "", fmt.Errorf("骰子表达式解析失败")
+	}
+}
 
-		var results []string
-		total := 0
-		lastOp := "+"
+func ParseAndEvaluate(input string) map[string]interface{} {
+	// 设置词法分析器
+	l := parser.NewLexer(input)
 
-		for i, part := range parts {
-			if i > 0 && i-1 < len(ops) {
-				lastOp = ops[i-1]
-			}
+	// 创建一个包装器，确保它实现 parser.yyLexer 接口
+	lexerWrapper := parser.NewLexerWrapper(l)
 
-			if strings.Contains(part, "d") {
-				diceParts := strings.Split(part, "d")
-				diceNum := 1
-				diceSides := 0
-				var err error
+	// 使用包装函数
+	result := parser.Parse(lexerWrapper)
 
-				if diceParts[0] != "" {
-					diceNum, err = strconv.Atoi(diceParts[0])
-					if err != nil {
-						return "", errors.New("无效的骰子数量")
-					}
-				}
-
-				if len(diceParts) < 2 {
-					return "", errors.New("无效的骰子表达式")
-				}
-
-				diceSides, err = strconv.Atoi(diceParts[1])
-				if err != nil {
-					return "", errors.New("无效的骰子面数")
-				}
-
-				if diceNum <= 0 || diceSides <= 0 {
-					return "", errors.New("骰子数量和面数必须为正整数")
-				}
-
-				var rolls []int
-				sum := 0
-				for j := 0; j < diceNum; j++ {
-					roll := rand.Intn(diceSides) + 1
-					rolls = append(rolls, roll)
-					sum += roll
-				}
-
-				switch lastOp {
-				case "+":
-					total += sum
-				case "-":
-					total -= sum
-				case "*":
-					total *= sum
-				}
-
-				results = append(results, fmt.Sprintf("%dd%d: %v = %d", diceNum, diceSides, rolls, sum))
-			} else {
-				num, err := strconv.Atoi(part)
-				if err != nil {
-					return "", errors.New("无效的数字")
-				}
-
-				switch lastOp {
-				case "+":
-					total += num
-				case "-":
-					total -= num
-				case "*":
-					total *= num
-				}
-
-				results = append(results, fmt.Sprintf("%d", num))
-			}
-		}
-
-		var builder strings.Builder
-		builder.WriteString("掷骰: ")
-		for i, res := range results {
-			if i > 0 {
-				builder.WriteString(fmt.Sprintf(" %s ", ops[i-1]))
-			}
-			builder.WriteString(res)
-		}
-		builder.WriteString(fmt.Sprintf(" = %d", total))
-		return builder.String(), nil
+	// 检查解析状态，0 表示成功
+	if result == 0 {
+		// 解析成功，获取计算结果
+		return parser.GetResult()
 	}
 
-	diceMutex.RLock()
-	sides := defaultDiceSides
-	diceMutex.RUnlock()
-
-	_, err := strconv.Atoi(expr)
-	if err != nil {
-		return "", errors.New("无效的骰子指令格式")
-	}
-
-	roll := rand.Intn(sides) + 1
-	return fmt.Sprintf("1D%d: %d", sides, roll), nil
+	// 解析失败
+	return nil
 }
 
 func processSetDice(cmd string) string {
@@ -945,15 +861,6 @@ func broadcastToWeb(message string) {
 				webMutex.Unlock()
 			}
 		}()
-	}
-}
-
-func handleWebCommand(command string) {
-	response := processCommand(command)
-	broadcastToWeb(response)
-
-	if err := sendToQQ(response); err != nil {
-		log.Printf("发送到QQ失败: %v", err)
 	}
 }
 
