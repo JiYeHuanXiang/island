@@ -320,6 +320,76 @@
             font-family: monospace;
         }
         
+        /* 新增的管理员设置样式 */
+        .admin-settings {
+            display: none;
+        }
+        
+        .admin-settings.active {
+            display: block;
+        }
+        
+        .group-list {
+            margin-top: 1rem;
+            border-top: 1px solid #eee;
+            padding-top: 1rem;
+        }
+        
+        .group-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 0.8rem;
+            background: #f9f9f9;
+            border-radius: var(--border-radius);
+            margin-bottom: 0.8rem;
+        }
+        
+        .group-info {
+            flex: 1;
+        }
+        
+        .group-actions {
+            display: flex;
+            gap: 8px;
+        }
+        
+        .btn-danger {
+            background: linear-gradient(135deg, var(--danger), #e74c3c);
+        }
+        
+        .btn-warning {
+            background: linear-gradient(135deg, var(--warning), #f1c40f);
+        }
+        
+        .btn-sm {
+            padding: 8px 12px;
+            font-size: 0.9rem;
+        }
+        
+        .tab-container {
+            display: flex;
+            border-bottom: 1px solid #ddd;
+            margin-bottom: 1rem;
+        }
+        
+        .tab {
+            padding: 0.8rem 1.2rem;
+            cursor: pointer;
+            border-bottom: 3px solid transparent;
+            transition: var(--transition);
+        }
+        
+        .tab.active {
+            border-bottom-color: var(--primary);
+            color: var(--primary);
+            font-weight: 600;
+        }
+        
+        .tab:hover {
+            background: rgba(0,0,0,0.05);
+        }
+        
         @media (max-width: 768px) {
             body {
                 padding: 1rem;
@@ -337,6 +407,17 @@
             button {
                 width: 100%;
                 justify-content: center;
+            }
+            
+            .group-item {
+                flex-direction: column;
+                align-items: flex-start;
+                gap: 8px;
+            }
+            
+            .group-actions {
+                width: 100%;
+                justify-content: flex-end;
             }
         }
 
@@ -401,6 +482,39 @@
         </div>
 
         <div class="card">
+            <div class="card-title"><i class="fas fa-cog"></i> 管理员设置</div>
+            <div class="tab-container">
+                <div class="tab active" onclick="switchTab('admin-settings')">管理员QQ</div>
+                <div class="tab" onclick="switchTab('group-management')">群组管理</div>
+            </div>
+            
+            <div id="admin-settings" class="admin-settings active">
+                <div class="settings-group">
+                    <div class="settings-label"><i class="fas fa-user-shield"></i> 管理员QQ:</div>
+                    <input type="text" id="adminQQ" placeholder="输入管理员QQ号">
+                    <button onclick="saveAdminQQ()"><i class="fas fa-save"></i> 保存</button>
+                </div>
+                <div id="adminStatus" class="status" style="display: none;">
+                    <i class="fas fa-check-circle"></i> 设置已保存
+                </div>
+            </div>
+            
+            <div id="group-management" class="admin-settings">
+                <div class="settings-group">
+                    <div class="settings-label"><i class="fas fa-robot"></i> 机器人状态:</div>
+                    <div id="botStatus" class="status status-disconnected">
+                        <i class="fas fa-exclamation-circle"></i> 未获取群组信息
+                    </div>
+                    <button onclick="refreshGroups()"><i class="fas fa-sync-alt"></i> 刷新群组</button>
+                </div>
+                <div class="group-list" id="groupList">
+                    <!-- 群组列表将在这里动态生成 -->
+                    <div class="system message">连接WebSocket后点击"刷新群组"获取群组列表</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
             <div class="card-title"><i class="fas fa-book"></i> 使用说明</div>
             <div class="help-content">
                 <p>骰子命令格式如下：</p>
@@ -432,6 +546,10 @@
         const connectionStatus = document.getElementById('connectionStatus');
         const sendToQQCheckbox = document.getElementById('sendToQQ');
         const targetLabel = document.getElementById('targetLabel');
+        const adminQQInput = document.getElementById('adminQQ');
+        const adminStatus = document.getElementById('adminStatus');
+        const groupList = document.getElementById('groupList');
+        const botStatus = document.getElementById('botStatus');
 
         // 从本地存储加载保存的设置
         if (localStorage.getItem('wsUrl')) {
@@ -441,6 +559,9 @@
             sendToQQCheckbox.checked = true;
             targetLabel.textContent = '发送到QQ';
         }
+        if (localStorage.getItem('adminQQ')) {
+            adminQQInput.value = localStorage.getItem('adminQQ');
+        }
 
         // 监听开关变化
         sendToQQCheckbox.addEventListener('change', function() {
@@ -448,6 +569,144 @@
             targetLabel.textContent = isChecked ? '发送到QQ' : '本地处理';
             localStorage.setItem('sendToQQ', isChecked);
         });
+
+        // 切换标签页
+        function switchTab(tabId) {
+            document.querySelectorAll('.admin-settings').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            document.querySelectorAll('.tab').forEach(tab => {
+                tab.classList.remove('active');
+            });
+            
+            document.getElementById(tabId).classList.add('active');
+            event.currentTarget.classList.add('active');
+        }
+
+        // 保存管理员QQ
+        function saveAdminQQ() {
+            const adminQQ = adminQQInput.value.trim();
+            if (!adminQQ) {
+                adminStatus.textContent = '请输入有效的QQ号';
+                adminStatus.style.display = 'block';
+                adminStatus.style.color = 'var(--danger)';
+                return;
+            }
+            
+            localStorage.setItem('adminQQ', adminQQ);
+            adminStatus.textContent = '管理员QQ已保存';
+            adminStatus.style.display = 'block';
+            adminStatus.style.color = 'var(--success)';
+            
+            // 如果有WebSocket连接，发送更新
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({
+                    type: 'admin',
+                    action: 'update',
+                    qq: adminQQ
+                }));
+            }
+            
+            setTimeout(() => {
+                adminStatus.style.display = 'none';
+            }, 3000);
+        }
+
+        // 刷新群组列表
+        function refreshGroups() {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('WebSocket未连接，无法获取群组信息', 'system');
+                botStatus.className = 'status status-disconnected';
+                botStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> WebSocket未连接';
+                return;
+            }
+            
+            ws.send(JSON.stringify({
+                type: 'group',
+                action: 'list'
+            }));
+            
+            botStatus.className = 'status';
+            botStatus.innerHTML = '<i class="fas fa-sync-alt fa-spin"></i> 正在获取群组信息...';
+        }
+
+        // 退出群组
+        function leaveGroup(groupId) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('WebSocket未连接，无法执行操作', 'system');
+                return;
+            }
+            
+            if (confirm(`确定要退出群 ${groupId} 吗？`)) {
+                ws.send(JSON.stringify({
+                    type: 'group',
+                    action: 'leave',
+                    group_id: groupId
+                }));
+                
+                // 更新UI
+                const groupItem = document.querySelector(`.group-item[data-group-id="${groupId}"]`);
+                if (groupItem) {
+                    groupItem.querySelector('.group-actions').innerHTML = '<span>正在退出...</span>';
+                }
+            }
+        }
+
+        // 关闭群组功能
+        function disableGroup(groupId) {
+            if (!ws || ws.readyState !== WebSocket.OPEN) {
+                addMessage('WebSocket未连接，无法执行操作', 'system');
+                return;
+            }
+            
+            if (confirm(`确定要关闭群 ${groupId} 的骰子功能吗？`)) {
+                ws.send(JSON.stringify({
+                    type: 'group',
+                    action: 'disable',
+                    group_id: groupId
+                }));
+                
+                // 更新UI
+                const groupItem = document.querySelector(`.group-item[data-group-id="${groupId}"]`);
+                if (groupItem) {
+                    groupItem.querySelector('.group-actions').innerHTML = '<span>正在关闭...</span>';
+                }
+            }
+        }
+
+        // 更新群组列表
+        function updateGroupList(groups) {
+            if (!groups || groups.length === 0) {
+                groupList.innerHTML = '<div class="system message">没有找到任何群组</div>';
+                botStatus.className = 'status status-disconnected';
+                botStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> 没有找到任何群组';
+                return;
+            }
+            
+            let html = '';
+            groups.forEach(group => {
+                html += `
+                <div class="group-item" data-group-id="${group.id}">
+                    <div class="group-info">
+                        <strong>${group.name}</strong> (ID: ${group.id})
+                        <div class="group-status">状态: ${group.active ? '已启用' : '已禁用'}</div>
+                    </div>
+                    <div class="group-actions">
+                        <button class="btn-danger btn-sm" onclick="leaveGroup('${group.id}')">
+                            <i class="fas fa-sign-out-alt"></i> 退出
+                        </button>
+                        <button class="btn-warning btn-sm" onclick="disableGroup('${group.id}')">
+                            <i class="fas fa-power-off"></i> ${group.active ? '关闭' : '开启'}
+                        </button>
+                    </div>
+                </div>
+                `;
+            });
+            
+            groupList.innerHTML = html;
+            botStatus.className = 'status status-connected';
+            botStatus.innerHTML = `<i class="fas fa-check-circle"></i> 已加载 ${groups.length} 个群组`;
+        }
 
         function connectWS() {
             const url = wsUrlInput.value.trim();
@@ -469,12 +728,25 @@
                 connectionStatus.textContent = '已连接';
                 connectionStatus.className = 'status status-connected';
                 addMessage('已连接到WebSocket服务器', 'system');
+                
+                // 如果有保存的管理员QQ，发送到服务器
+                if (localStorage.getItem('adminQQ')) {
+                    ws.send(JSON.stringify({
+                        type: 'admin',
+                        action: 'update',
+                        qq: localStorage.getItem('adminQQ')
+                    }));
+                }
             };
             
             ws.onclose = function() {
                 connectionStatus.textContent = '未连接';
                 connectionStatus.className = 'status status-disconnected';
                 addMessage('WebSocket连接已关闭', 'system');
+                
+                // 更新群组状态
+                botStatus.className = 'status status-disconnected';
+                botStatus.innerHTML = '<i class="fas fa-exclamation-circle"></i> WebSocket未连接';
             };
             
             ws.onerror = function(error) {
@@ -484,7 +756,22 @@
             };
             
             ws.onmessage = function(event) {
-                addMessage(event.data, 'result');
+                try {
+                    const data = JSON.parse(event.data);
+                    
+                    if (data.type === 'group' && data.action === 'list') {
+                        updateGroupList(data.groups);
+                    } else if (data.type === 'group' && (data.action === 'leave' || data.action === 'disable')) {
+                        addMessage(`群组操作成功: ${data.message}`, 'system');
+                        refreshGroups(); // 刷新群组列表
+                    } else {
+                        // 普通消息
+                        addMessage(event.data, 'result');
+                    }
+                } catch (e) {
+                    // 不是JSON数据，直接显示
+                    addMessage(event.data, 'result');
+                }
             };
         }
 
