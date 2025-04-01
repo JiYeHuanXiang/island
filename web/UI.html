@@ -2,157 +2,251 @@
 <html>
 <head>
     <title>Island:dice - COC</title>
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
     <style>
-        body {
-            font-family: 'Segoe UI', system-ui, sans-serif;
-            max-width: 800px;
-            margin: 2rem auto;
-            padding: 0 20px;
-            background: #f8f9fa;
+        :root {
+            --primary: #1a4b77;
+            --primary-light: #2d6da3;
+            --secondary: #6c3483;
+            --accent: #58b19f;
+            --dark: #2c3e50;
+            --light: #ecf0f1;
+            --danger: #c0392b;
+            --warning: #f39c12;
+            --success: #27ae60;
+            --text: #2d3436;
+            --bg: #f5f6fa;
+            --card-bg: #ffffff;
+            --border-radius: 12px;
+            --shadow: 0 4px 12px rgba(0,0,0,0.1);
+            --transition: all 0.3s ease;
         }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+        
+        body {
+            font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 2rem;
+            background: var(--bg);
+            color: var(--text);
+            line-height: 1.6;
+        }
+        
+        .container {
+            display: grid;
+            gap: 1.5rem;
+        }
+        
         .header {
             text-align: center;
             margin-bottom: 1.5rem;
+            padding: 1rem;
+            background: linear-gradient(135deg, var(--primary), var(--secondary));
+            border-radius: var(--border-radius);
+            color: white;
+            box-shadow: var(--shadow);
         }
+        
         .header h1 {
-            color: #228be6;
             margin-bottom: 0.5rem;
+            font-size: 2.2rem;
+            font-weight: 700;
+            letter-spacing: -0.5px;
         }
+        
         .header p {
-            color: #495057;
-            margin-top: 0;
+            opacity: 0.9;
+            font-size: 1.1rem;
+            max-width: 600px;
+            margin: 0 auto;
         }
+        
+        .card {
+            background: var(--card-bg);
+            border-radius: var(--border-radius);
+            padding: 1.5rem;
+            box-shadow: var(--shadow);
+            transition: var(--transition);
+            border-top: 4px solid var(--primary);
+        }
+
+        .card:hover {
+            transform: translateY(-5px);
+            box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+        }
+        
+        .card-title {
+            font-weight: 700;
+            font-size: 1.2rem;
+            color: var(--primary);
+            margin-bottom: 1rem;
+            display: flex;
+            align-items: center;
+            gap: 0.5rem;
+        }
+        
         #output {
             height: 50vh;
-            border: 2px solid #e9ecef;
-            border-radius: 12px;
+            border-radius: var(--border-radius);
             padding: 1rem;
-            background: white;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+            background: var(--card-bg);
+            box-shadow: var(--shadow);
             overflow-y: auto;
             margin-bottom: 1.5rem;
+            border: 1px solid rgba(0,0,0,0.1);
+            transition: var(--transition);
         }
+        
         .message {
             margin: 0.8rem 0;
-            padding: 0.8rem;
-            border-radius: 8px;
+            padding: 1rem;
+            border-radius: var(--border-radius);
             font-size: 0.95rem;
             line-height: 1.4;
-            animation: fadeIn 0.3s ease;
+            animation: fadeIn 0.4s ease;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.05);
         }
+        
         @keyframes fadeIn {
             from { opacity: 0; transform: translateY(10px); }
             to { opacity: 1; transform: translateY(0); }
         }
+        
         .command {
-            background: #e7f5ff;
-            border-left: 4px solid #228be6;
-            color: #1864ab;
+            background: linear-gradient(to right, #e7f5ff, #dbeafe);
+            border-left: 4px solid var(--primary);
+            color: var(--primary);
         }
+        
         .result {
-            background: #fff3bf;
-            border-left: 4px solid #fcc419;
+            background: linear-gradient(to right, #fff8e1, #fffde7);
+            border-left: 4px solid var(--warning);
             color: #5f3f00;
         }
+        
         .system {
-            background: #f8f9fa;
+            background: linear-gradient(to right, #f1f3f5, #f8f9fa);
             border-left: 4px solid #adb5bd;
             color: #495057;
         }
+        
         .input-group {
             display: flex;
             gap: 12px;
             margin-bottom: 1rem;
         }
-        input {
+        
+        input, select {
             flex: 1;
-            padding: 12px 16px;
-            border: 2px solid #dee2e6;
-            border-radius: 8px;
+            padding: 14px 16px;
+            border: 2px solid #e9ecef;
+            border-radius: var(--border-radius);
             font-size: 1rem;
-            transition: all 0.2s;
+            transition: var(--transition);
+            box-shadow: inset 0 1px 3px rgba(0,0,0,0.05);
         }
-        input:focus {
-            border-color: #4dabf7;
-            box-shadow: 0 0 0 3px rgba(77, 171, 247, 0.2);
+        
+        input:focus, select:focus {
+            border-color: var(--primary-light);
+            box-shadow: 0 0 0 3px rgba(45, 109, 163, 0.2);
             outline: none;
         }
+        
         button {
             padding: 12px 24px;
-            background: #228be6;
+            background: linear-gradient(135deg, var(--primary), var(--primary-light));
             color: white;
             border: none;
-            border-radius: 8px;
+            border-radius: var(--border-radius);
             cursor: pointer;
             font-weight: 600;
-            transition: all 0.2s;
+            transition: var(--transition);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
+        
         button:hover {
-            background: #1971c2;
-            transform: translateY(-1px);
+            background: var(--primary-light);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.15);
         }
+        
         button:active {
             transform: translateY(0);
         }
+        
         .timestamp {
             font-size: 0.8em;
             color: #868e96;
             margin-right: 8px;
+            font-weight: 500;
         }
-        .settings {
-            background: white;
-            border: 2px solid #e9ecef;
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        }
-        .settings-title {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: #495057;
-        }
+        
         .settings-group {
             display: flex;
             gap: 12px;
-            margin-bottom: 0.5rem;
+            margin-bottom: 1rem;
             align-items: center;
+            flex-wrap: wrap;
         }
+        
         .settings-label {
-            min-width: 100px;
-            padding: 12px 0;
+            min-width: 120px;
             font-weight: 500;
+            color: var(--dark);
+            display: flex;
+            align-items: center;
+            gap: 8px;
         }
+        
         .status {
-            padding: 0.5rem;
-            border-radius: 8px;
-            margin-top: 0.5rem;
+            padding: 0.6rem;
+            border-radius: var(--border-radius);
+            margin-top: 1rem;
             font-weight: 500;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: var(--transition);
         }
+        
         .status-connected {
-            background: #ebfbee;
-            color: #2b8a3e;
+            background: #e6f7ef;
+            color: var(--success);
         }
+        
         .status-disconnected {
-            background: #fff3bf;
-            color: #e67700;
+            background: #fff3e0;
+            color: var(--warning);
         }
+        
         .switch-container {
             display: flex;
             align-items: center;
             gap: 12px;
         }
+        
         .switch {
             position: relative;
             display: inline-block;
             width: 60px;
-            height: 34px;
+            height: 30px;
         }
+        
         .switch input {
             opacity: 0;
             width: 0;
             height: 0;
         }
+        
         .slider {
             position: absolute;
             cursor: pointer;
@@ -164,90 +258,170 @@
             transition: .4s;
             border-radius: 34px;
         }
+        
         .slider:before {
             position: absolute;
             content: "";
-            height: 26px;
-            width: 26px;
+            height: 22px;
+            width: 22px;
             left: 4px;
             bottom: 4px;
             background-color: white;
             transition: .4s;
             border-radius: 50%;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.2);
         }
+        
         input:checked + .slider {
-            background-color: #228be6;
+            background-color: var(--primary);
         }
+        
         input:checked + .slider:before {
-            transform: translateX(26px);
+            transform: translateX(30px);
         }
+        
         .switch-label {
             font-weight: 500;
+            color: var(--dark);
         }
-        .help-section {
-            background: white;
-            border: 2px solid #e9ecef;
-            border-radius: 12px;
-            padding: 1rem;
-            margin-bottom: 1.5rem;
-            box-shadow: 0 2px 8px rgba(0,0,0,0.05);
-        }
-        .help-title {
-            font-weight: 600;
-            margin-bottom: 0.5rem;
-            color: #495057;
-        }
+        
         .help-content {
-            font-size: 0.9rem;
-            line-height: 1.5;
+            font-size: 0.95rem;
+            line-height: 1.6;
+        }
+        
+        .help-content p {
+            margin-bottom: 0.8rem;
+        }
+        
+        .help-content ul {
+            margin-left: 1.5rem;
+            margin-bottom: 1rem;
+        }
+        
+        .help-content li {
+            margin-bottom: 0.5rem;
+        }
+        
+        .help-content strong {
+            color: var(--primary);
+            background: rgba(45, 109, 163, 0.1);
+            padding: 2px 6px;
+            border-radius: 4px;
+            font-weight: 600;
+        }
+        
+        .command-example {
+            background: #f8f9fa;
+            border-left: 3px solid var(--primary);
+            padding: 0.8rem;
+            margin: 0.8rem 0;
+            border-radius: 4px;
+            font-family: monospace;
+        }
+        
+        @media (max-width: 768px) {
+            body {
+                padding: 1rem;
+            }
+            
+            .settings-group {
+                flex-direction: column;
+                align-items: flex-start;
+            }
+            
+            .input-group {
+                flex-direction: column;
+            }
+            
+            button {
+                width: 100%;
+                justify-content: center;
+            }
+        }
+
+        /* Custom scrollbar */
+        ::-webkit-scrollbar {
+            width: 8px;
+        }
+        
+        ::-webkit-scrollbar-track {
+            background: #f1f1f1;
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb {
+            background: #c1c1c1;
+            border-radius: 10px;
+        }
+        
+        ::-webkit-scrollbar-thumb:hover {
+            background: #a8a8a8;
+        }
+
+        /* Animation for actions */
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .pulse {
+            animation: pulse 0.5s ease;
         }
     </style>
 </head>
 <body>
-    <div class="header">
-        <h1>Island:dice - COC骰子机器人</h1>
-        <p>一个AI制作的COC(克苏鲁的呼唤)TRPG骰子机器人</p>
-    </div>
-
-    <div class="settings">
-        <div class="settings-title">连接设置</div>
-        <div class="settings-group">
-            <div class="settings-label">WebSocket地址:</div>
-            <input type="text" id="wsUrl" placeholder="ws://127.0.0.1:3009">
-            <button onclick="connectWS()">连接</button>
+    <div class="container">
+        <div class="header">
+            <h1><i class="fas fa-dice-d20 fa-sm"></i> Island:dice - COC骰子机器人</h1>
+            <p>一个AI制作的COC(克苏鲁的呼唤)TRPG骰子机器人</p>
         </div>
-        <div class="settings-group">
-            <div class="settings-label">发送目标:</div>
-            <div class="switch-container">
-                <label class="switch">
-                    <input type="checkbox" id="sendToQQ">
-                    <span class="slider"></span>
-                </label>
-                <span class="switch-label" id="targetLabel">本地处理</span>
+        
+        <div class="card">
+            <div class="card-title"><i class="fas fa-plug"></i> 连接设置</div>
+            <div class="settings-group">
+                <div class="settings-label"><i class="fas fa-network-wired"></i> WebSocket:</div>
+                <input type="text" id="wsUrl" placeholder="ws://127.0.0.1:3009">
+                <button onclick="connectWS()"><i class="fas fa-link"></i> 连接</button>
+            </div>
+            <div class="settings-group">
+                <div class="settings-label"><i class="fas fa-paper-plane"></i> 发送目标:</div>
+                <div class="switch-container">
+                    <label class="switch">
+                        <input type="checkbox" id="sendToQQ">
+                        <span class="slider"></span>
+                    </label>
+                    <span class="switch-label" id="targetLabel">本地处理</span>
+                </div>
+            </div>
+            <div id="connectionStatus" class="status status-disconnected">
+                <i class="fas fa-exclamation-circle"></i> 未连接
             </div>
         </div>
-        <div id="connectionStatus" class="status status-disconnected">未连接</div>
-    </div>
 
-    <div class="help-section">
-        <div class="help-title">使用说明</div>
-        <div class="help-content">
-            <p>1. 输入指令以进行骰子操作，例如：</p>
-            <ul>
-                <li><strong>.coc7</strong> - 生成7版COC调查员属性</li>
-                <li><strong>.ra 70</strong> - 进行技能值为70的检定</li>
-                <li><strong>.r 3d6</strong> - 投掷3个6面骰</li>
-                <li><strong>.sc 1/1d6</strong> - 理智检定</li>
-            </ul>
-            <p>2. 连接WebSocket后，可以切换"发送目标"将指令发送到QQ群</p>
-            <p>3. 输入<strong>.help</strong>查看完整指令列表</p>
+        <div class="card">
+            <div class="card-title"><i class="fas fa-book"></i> 使用说明</div>
+            <div class="help-content">
+                <p>骰子命令格式如下：</p>
+                <ul>
+                    <li><strong>.coc7</strong> - 生成7版COC调查员属性</li>
+                    <li><strong>.ra 70</strong> - 进行技能值为70的检定</li>
+                    <li><strong>.r 3d6</strong> - 投掷3个6面骰</li>
+                    <li><strong>.sc 1/1d6</strong> - 理智检定</li>
+                </ul>
+                <p>连接WebSocket后，可以切换"发送目标"将指令发送到QQ群</p>
+                <div class="command-example">.help</div>
+                <p>输入上述命令查看完整指令列表</p>
+            </div>
         </div>
-    </div>
 
-    <div id="output"></div>
-    <div class="input-group">
-        <input type="text" id="input" placeholder="输入指令（例：.coc7/.ra 70）" autocomplete="off">
-        <button onclick="sendCommand()">投掷 🎲</button>
+        <div id="output" class="card"></div>
+        
+        <div class="input-group">
+            <input type="text" id="input" placeholder="输入指令（例：.coc7/.ra 70）" autocomplete="off">
+            <button onclick="sendCommand()"><i class="fas fa-dice"></i> 投掷骰子</button>
+        </div>
     </div>
 
     <script>
@@ -322,6 +496,12 @@
             input.value = '';
 
             const sendToQQ = sendToQQCheckbox.checked;
+            
+            // Add animation to the button
+            document.querySelector('button').classList.add('pulse');
+            setTimeout(() => {
+                document.querySelector('button').classList.remove('pulse');
+            }, 500);
             
             if (sendToQQ) {
                 // 发送到QQ
