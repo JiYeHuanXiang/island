@@ -12,6 +12,6 @@
 | 角色 | 贡献者 |
 |------|--------|
 | **主要开发者** | deepseekV3 |
-| **辅助开发者** | deepseekR1 |
+| **辅助开发者** | deepseekR1，BegoniaHe,dreamtel(jiyehuanxiang) |
 | **校验** | copilot（GPT-4o）,claude 3.7 thinking |
 
